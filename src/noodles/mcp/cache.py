@@ -215,6 +215,7 @@ def copy_cached_result(
         "start_points.json",
         "end_points.json",
         "orphans.json",
+        "snippets.json",
         "viewer.html",
         "viewer.js",
     ]

@@ -9,6 +9,87 @@ from noodles.utils import _sanitize_id
 
 VIEWER_THEMES = ("auto", "light", "dark")
 
+# Code excerpts shown in the viewer are bounded per function to keep results small:
+# the first MAX_SNIPPET_LINES lines, plus CALL_CONTEXT_LINES around each later
+# call site, up to MAX_SNIPPET_TOTAL_LINES in all.
+MAX_SNIPPET_LINES = 80
+CALL_CONTEXT_LINES = 10
+MAX_SNIPPET_TOTAL_LINES = 300
+SNIPPETS_FILE = "snippets.json"
+
+
+def _snippet_ranges(total: int, call_offsets: list[int]) -> list[tuple[int, int]]:
+    """Line ranges [start, end) to keep: the head, plus a window around later calls."""
+    ranges = [(0, min(total, MAX_SNIPPET_LINES))]
+    for off in sorted(set(call_offsets)):
+        if off < MAX_SNIPPET_LINES or off >= total:
+            continue
+        ranges.append((max(0, off - CALL_CONTEXT_LINES), min(total, off + CALL_CONTEXT_LINES + 1)))
+
+    merged: list[tuple[int, int]] = []
+    budget = MAX_SNIPPET_TOTAL_LINES
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            start = merged[-1][1]
+            if end <= start:
+                continue
+            take = min(end - start, budget)
+            merged[-1] = (merged[-1][0], start + take)
+        else:
+            take = min(end - start, budget)
+            merged.append((start, start + take))
+        budget -= take
+        if budget <= 0:
+            break
+    return merged
+
+
+def write_snippets(call_graph: dict, result_dir: str | Path) -> Path:
+    """Save a bounded source excerpt per function for the viewer's code panel.
+
+    Kept out of call_graph.json, which stays free of source code (it is also
+    returned verbatim by the MCP tools).
+
+    Writes {function_id: {"line": first_line, "total_lines": n,
+                          "segments": [{"offset": i, "code": text}, ...]}},
+    where offset is the segment's first line relative to the function's first line.
+    """
+    call_lines: dict[str, list[int]] = {}
+    for edge in call_graph.get("edges", []):
+        if edge.get("line"):
+            call_lines.setdefault(edge["from"], []).append(edge["line"])
+
+    snippets: dict[str, dict] = {}
+    for node in call_graph["nodes"]:
+        source = node.get("source") or ""
+        if not source or node.get("line") is None:
+            continue
+        lines = source.splitlines()
+        # The definition's text starts at its column; restore that indent on line 1
+        lines[0] = " " * (node.get("column") or 0) + lines[0]
+        offsets = [ln - node["line"] for ln in call_lines.get(node["id"], [])]
+        snippets[node["id"]] = {
+            "line": node["line"],
+            "total_lines": len(lines),
+            "segments": [
+                {"offset": start, "code": "\n".join(lines[start:end])}
+                for start, end in _snippet_ranges(len(lines), offsets)
+            ],
+        }
+    path = Path(result_dir) / SNIPPETS_FILE
+    path.write_text(json.dumps(snippets), encoding="utf-8")
+    return path
+
+
+def _load_snippets(result_path: Path) -> dict:
+    path = result_path / SNIPPETS_FILE
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
 
 def resolve_theme(theme: str | None = None) -> str:
     """Default viewer theme: the given value, else $NOODLES_THEME, else "auto" (follow the OS)."""
@@ -26,7 +107,8 @@ def load_result(result_dir: str | Path, theme: str | None = None) -> dict:
                $NOODLES_THEME, else "auto". A theme chosen in the viewer wins.
 
     Returns:
-        Dict with keys: diagrams, navigation, nodes, edges, id_map, theme
+        Dict with keys: diagrams, navigation, nodes, edges, id_map, theme,
+        snippets (empty for results made before snippets.json existed)
     """
     result_path = Path(result_dir)
 
@@ -66,6 +148,7 @@ def load_result(result_dir: str | Path, theme: str | None = None) -> dict:
             "function": func_name,
             "status": node.get("status", "unchanged"),
             "update": node.get("update", ""),
+            "line": node.get("line"),
         }
 
     # Build edges metadata lookup: "sanitized_from -> sanitized_to" -> metadata
@@ -79,6 +162,9 @@ def load_result(result_dir: str | Path, theme: str | None = None) -> dict:
             "condition": edge.get("condition"),
             "is_returned": edge.get("is_returned", False),
             "index": edge.get("index"),
+            "from": edge["from"],
+            "to": edge["to"],
+            "line": edge.get("line"),
         }
 
     # Build navigation map: for each diagram, which nodes link to which sub-diagrams
@@ -131,6 +217,7 @@ def load_result(result_dir: str | Path, theme: str | None = None) -> dict:
         "edges": edges,
         "id_map": id_map,
         "theme": resolve_theme(theme),
+        "snippets": _load_snippets(result_path),
     }
 
 

@@ -43,8 +43,18 @@
     --lg-end-fill: #fce4ec;
     --lg-updated-fill: #fff9c4;
     --lg-new-fill: #c8e6c9;
+    --code-bg: #fafafa;
+    --code-fg: #24292e;
+    --code-ln: #a0a0a0;
+    --code-def-bg: #fff3c4;
+    --code-call-bg: #e8f0fe;
   }
   :root[data-theme="dark"] {
+    --code-bg: #18191b;
+    --code-fg: #d4d4d4;
+    --code-ln: #6b6b6b;
+    --code-def-bg: #3d3a1f;
+    --code-call-bg: #1f2d40;
     color-scheme: dark;
     --bg: #1e1f22;
     --fg: #d4d4d4;
@@ -254,6 +264,60 @@
     padding-left: 2px;
   }
 
+  /* --- Code panel --- */
+  #code-panel {
+    display: none;
+    flex-direction: column;
+    height: 38vh;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--code-bg);
+  }
+  #code-panel.open { display: flex; }
+  #code-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  #code-title { font-weight: 600; }
+  #code-loc { color: var(--tt-file); font-family: monospace; font-size: 12px; word-break: break-all; }
+  #code-close {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--btn-border);
+    color: var(--btn-fg);
+    border-radius: 4px;
+    padding: 1px 8px;
+    cursor: pointer;
+  }
+  #code-close:hover { background: var(--btn-hover); }
+  #code-body {
+    flex: 1;
+    overflow: auto;
+    font-family: Consolas, 'SF Mono', Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--code-fg);
+    padding: 6px 0;
+    tab-size: 4;
+  }
+  #code-body .cl { display: flex; white-space: pre; padding-right: 16px; min-width: max-content; }
+  #code-body .cl.def { background: var(--code-def-bg); }
+  #code-body .cl.call { background: var(--code-call-bg); }
+  #code-body .ln {
+    flex-shrink: 0;
+    width: 56px;
+    padding-right: 14px;
+    text-align: right;
+    color: var(--code-ln);
+    user-select: none;
+  }
+  #code-body .note { padding: 6px 16px; color: var(--tt-file); font-family: inherit; white-space: normal; }
+
   /* --- Loading --- */
   #loading {
     position: absolute;
@@ -318,8 +382,19 @@
     <div class="legend-sep"></div>
     <div class="legend-hint">Click [+] node to jump</div>
     <div class="legend-hint">Hover node for details</div>
+    <div class="legend-hint">Click node or label for code</div>
+    <div class="legend-hint">(Shift+click a [+] node)</div>
     <div class="legend-hint">T to switch theme</div>
   </div>
+</div>
+
+<div id="code-panel">
+  <div id="code-header">
+    <span id="code-title"></span>
+    <span id="code-loc"></span>
+    <button id="code-close" title="Close (Esc)">&times;</button>
+  </div>
+  <div id="code-body"></div>
 </div>
 
 <div id="tooltip"></div>
@@ -343,6 +418,7 @@
   let zoom = 1;
   let panX = 0, panY = 0;
   let isPanning = false;
+  let panMoved = false;  // true once a drag moves, so the click that ends it is ignored
   let panStartX = 0, panStartY = 0;
   let panStartPanX = 0, panStartPanY = 0;
 
@@ -544,17 +620,20 @@
       nodeEl.addEventListener('mousemove', (e) => positionTooltip(e));
       nodeEl.addEventListener('mouseleave', () => hideTooltip());
 
-      // Click navigation for solid (has sub-diagram) nodes
-      if (nav[mermaidId]) {
-        nodeEl.classList.add('clickable');
-        nodeEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          hideTooltip();
+      // Click: nodes with a sub-diagram navigate (Shift+click shows code);
+      // other nodes show their code
+      nodeEl.classList.add('clickable');
+      nodeEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideTooltip();
+        if (nav[mermaidId] && !e.shiftKey) {
           const targetDiagram = nav[mermaidId];
           const title = meta ? meta.name : targetDiagram;
           navigateTo(targetDiagram, title);
-        });
-      }
+        } else if (originalId) {
+          showNodeCode(originalId);
+        }
+      });
     });
 
     // Process edge labels
@@ -563,7 +642,137 @@
       labelEl.addEventListener('mouseenter', (e) => showEdgeTooltip(e, labelEl));
       labelEl.addEventListener('mousemove', (e) => positionTooltip(e));
       labelEl.addEventListener('mouseleave', () => hideTooltip());
+      labelEl.addEventListener('click', (e) => {
+        if (panMoved) return;
+        const edgeMeta = findEdgeByLabel(labelEl);
+        if (edgeMeta) {
+          e.stopPropagation();
+          hideTooltip();
+          showEdgeCode(edgeMeta);
+        }
+      });
     });
+  }
+
+  // ---- Code panel ----
+  const codePanel = document.getElementById('code-panel');
+  const codeTitle = document.getElementById('code-title');
+  const codeLoc = document.getElementById('code-loc');
+  const codeBody = document.getElementById('code-body');
+  const CONTEXT_LINES = 10;
+
+  document.getElementById('code-close').addEventListener('click', closeCode);
+
+  function closeCode() {
+    codePanel.classList.remove('open');
+  }
+
+  function openCode(title, loc, html) {
+    codeTitle.textContent = title;
+    codeLoc.textContent = loc;
+    codeBody.innerHTML = html;
+    codePanel.classList.add('open');
+    const target = codeBody.querySelector('.cl.focus') || codeBody.querySelector('.cl.def');
+    if (target) target.scrollIntoView({ block: 'center' });
+  }
+
+  function fileOf(id) {
+    return id.includes('::') ? id.split('::')[0] : '';
+  }
+
+  // A snippet is stored as segments of the function: [{offset, code}], offsets
+  // relative to its first line. Render lines [from, to) of one segment.
+  function renderSegment(snip, seg, from, to, marks, titles) {
+    const lines = seg.code.split('\n');
+    let html = '';
+    for (let i = Math.max(0, from); i < Math.min(lines.length, to); i++) {
+      const lineNo = snip.line + seg.offset + i;
+      const cls = marks[lineNo] || '';
+      const title = titles[lineNo] ? ` title="${escapeHtml(titles[lineNo])}"` : '';
+      html += `<div class="cl ${cls}"${title}><span class="ln">${lineNo}</span><span>${escapeHtml(lines[i]) || ' '}</span></div>`;
+    }
+    return html;
+  }
+
+  function gapNote(fromLine, toLine) {
+    return `<div class="note">&middot;&middot;&middot; lines ${fromLine}&ndash;${toLine} not stored &middot;&middot;&middot;</div>`;
+  }
+
+  function segmentEnd(seg) {
+    return seg.offset + seg.code.split('\n').length;  // exclusive, relative
+  }
+
+  function noCodeNote(meta) {
+    return '<div class="note">No code stored for this map. Re-run the analysis to include code excerpts.</div>';
+  }
+
+  function showNodeCode(nodeId) {
+    const meta = DATA.nodes[nodeId] || {};
+    const snip = (DATA.snippets || {})[nodeId];
+    const loc = fileOf(nodeId) + (meta.line ? ':' + meta.line : '');
+    const title = meta.name || nodeId.split('::').pop();
+    if (!snip) {
+      openCode(title, loc, noCodeNote(meta));
+      return;
+    }
+    // Highlight the definition line and every call site to another mapped function
+    const marks = { [snip.line]: 'def' };
+    const titles = {};
+    Object.values(DATA.edges).forEach(edge => {
+      if (edge.from === nodeId && edge.line && edge.line !== snip.line) {
+        marks[edge.line] = 'call';
+        const callee = DATA.nodes[edge.to];
+        titles[edge.line] = 'calls ' + (callee ? callee.name : edge.to.split('::').pop());
+      }
+    });
+    let html = '';
+    let shownTo = 0;  // relative offset reached so far
+    (snip.segments || []).forEach(seg => {
+      if (seg.offset > shownTo) html += gapNote(snip.line + shownTo, snip.line + seg.offset - 1);
+      html += renderSegment(snip, seg, 0, Infinity, marks, titles);
+      shownTo = segmentEnd(seg);
+    });
+    if (snip.total_lines > shownTo) {
+      html += gapNote(snip.line + shownTo, snip.line + snip.total_lines - 1);
+    }
+    openCode(title, loc, html);
+  }
+
+  function showEdgeCode(edge) {
+    const caller = DATA.nodes[edge.from] || {};
+    const callee = DATA.nodes[edge.to] || {};
+    const snip = (DATA.snippets || {})[edge.from];
+    const title = (caller.name || edge.from.split('::').pop()) + ' → ' + (callee.name || edge.to.split('::').pop());
+    const loc = fileOf(edge.from) + (edge.line ? ':' + edge.line : '');
+    if (!snip || !edge.line) {
+      openCode(title, loc, noCodeNote(caller));
+      return;
+    }
+    // The call line in the middle, with CONTEXT_LINES before and after
+    const offset = edge.line - snip.line;
+    const seg = (snip.segments || []).find(s => offset >= s.offset && offset < segmentEnd(s));
+    if (!seg) {
+      openCode(title, loc, `<div class="note">The call on line ${edge.line} isn't in the stored excerpt (the per-function limit was reached).</div>`);
+      return;
+    }
+    const marks = { [snip.line]: 'def', [edge.line]: 'call focus' };
+    const rel = offset - seg.offset;
+    openCode(title, loc, renderSegment(snip, seg, rel - CONTEXT_LINES, rel + CONTEXT_LINES + 1, marks, {}));
+  }
+
+  // Edge labels carry no ids, so match by label text, preferring edges in the current diagram
+  function findEdgeByLabel(labelEl) {
+    const labelText = (labelEl.textContent || '').trim().replace(/^"|"$/g, '');
+    if (!labelText) return null;
+    const source = DATA.diagrams[currentDiagram] || '';
+    let fallback = null;
+    for (const [key, meta] of Object.entries(DATA.edges)) {
+      if (meta.label !== labelText) continue;
+      const [fromId, toId] = key.split(' -> ');
+      if (source.includes(fromId) && source.includes(toId)) return meta;
+      if (!fallback) fallback = meta;
+    }
+    return fallback;
   }
 
   function extractNodeId(nodeEl) {
@@ -590,7 +799,7 @@
       tooltip.innerHTML = `
         <div class="tt-name">${escapeHtml(meta.name)}${badge}${tagHtml}</div>
         ${meta.description ? `<div class="tt-desc">${escapeHtml(meta.description)}</div>` : ''}
-        ${meta.file_path ? `<div class="tt-file">${escapeHtml(meta.file_path)}::${escapeHtml(meta.function)}</div>` : ''}
+        ${meta.file_path ? `<div class="tt-file">${escapeHtml(meta.file_path)}${meta.line ? ':' + escapeHtml(meta.line) : ''} &middot; ${escapeHtml(meta.function)}</div>` : ''}
         ${updateHtml}
       `;
     }
@@ -600,18 +809,14 @@
 
   function showEdgeTooltip(e, labelEl) {
     const labelText = (labelEl.textContent || '').trim().replace(/^"|"$/g, '');
-    // Find matching edge by label text
-    let edgeMeta = null;
-    for (const [key, meta] of Object.entries(DATA.edges)) {
-      if (meta.label === labelText) {
-        edgeMeta = meta;
-        break;
-      }
-    }
+    const edgeMeta = findEdgeByLabel(labelEl);
 
     if (edgeMeta) {
       let html = `<div class="tt-edge-label">${escapeHtml(edgeMeta.label)}</div>`;
       if (edgeMeta.description) html += `<div class="tt-desc">${escapeHtml(edgeMeta.description)}</div>`;
+      if (edgeMeta.line) {
+        html += `<div class="tt-row">Called at: <span>${escapeHtml(fileOf(edgeMeta.from))}:${escapeHtml(edgeMeta.line)}</span></div>`;
+      }
       const idx = edgeMeta.index != null ? escapeHtml(edgeMeta.index) : 'N/A';
       html += `<div class="tt-row">Index: <span>${idx}</span></div>`;
       const cond = escapeHtml(edgeMeta.condition) || 'None';
@@ -690,6 +895,7 @@
     // Don't start pan if clicking a node
     if (e.target.closest('.node')) return;
     isPanning = true;
+    panMoved = false;
     area.classList.add('panning');
     panStartX = e.clientX;
     panStartY = e.clientY;
@@ -700,6 +906,7 @@
 
   window.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
+    if (Math.abs(e.clientX - panStartX) + Math.abs(e.clientY - panStartY) > 4) panMoved = true;
     panX = panStartPanX + (e.clientX - panStartX);
     panY = panStartPanY + (e.clientY - panStartY);
     applyTransform();
@@ -786,7 +993,11 @@
   // ---- Keyboard ----
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      navigateBack();
+      if (codePanel.classList.contains('open')) {
+        closeCode();
+      } else {
+        navigateBack();
+      }
     } else if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
       setTheme(theme === 'dark' ? 'light' : 'dark', { save: true });
     }
