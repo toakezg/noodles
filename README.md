@@ -132,6 +132,7 @@ Once configured, Claude Code can use these tools:
 - **Drill down** - Click `[+]` nodes
 - **Back** - Escape (closes the code panel first if it's open)
 - **View code** - Click a function to see its code with line numbers, its definition and call sites highlighted. Shift+click for `[+]` nodes, since a plain click opens their sub-diagram. Click an edge label to see the call in context (10 lines either side). Tooltips show `file:line`. Excerpts are stored in `snippets.json`: the first 80 lines of each function plus a window around later calls, at most 300 lines per function.
+- **Rotate / flip** - Top-bar buttons, or `R` / `Shift+R` to rotate 90°, `H` / `V` to flip, `O` to reset. The orientation is remembered. `F` fits the diagram to the window.
 - **Light/dark theme** - The button in the top bar, or `T`. The viewer follows your OS theme by default and remembers your choice. To default to one theme, set `NOODLES_THEME=dark` (or `light`) in the environment or `.env`, or pass `noodles viewer <dir> --theme dark`.
 
 ## Supported languages

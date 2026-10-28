@@ -112,7 +112,7 @@
     min-height: 44px;
   }
 
-  #back-btn, #theme-btn {
+  #back-btn, #theme-btn, .orient-btn {
     background: none;
     border: 1px solid var(--btn-border);
     color: var(--btn-fg);
@@ -122,10 +122,12 @@
     font-size: 14px;
     white-space: nowrap;
   }
-  #back-btn:hover, #theme-btn:hover { background: var(--btn-hover); }
+  #back-btn:hover, #theme-btn:hover, .orient-btn:hover { background: var(--btn-hover); }
   #back-btn:disabled { opacity: 0.3; cursor: default; }
   #back-btn:disabled:hover { background: none; }
-  #theme-btn { margin-left: auto; }
+  #orient-tools { margin-left: auto; display: flex; gap: 4px; }
+  .orient-btn { padding: 4px 9px; }
+  .orient-btn.active { border-color: var(--link); color: var(--link); }
 
   #breadcrumb {
     display: flex;
@@ -346,6 +348,13 @@
 <div id="breadcrumb-bar">
   <button id="back-btn" disabled>&larr; Back</button>
   <div id="breadcrumb"></div>
+  <div id="orient-tools">
+    <button class="orient-btn" id="rotate-ccw-btn" title="Rotate 90&deg; counter-clockwise (Shift+R)">&#8634;</button>
+    <button class="orient-btn" id="rotate-cw-btn" title="Rotate 90&deg; clockwise (R)">&#8635;</button>
+    <button class="orient-btn" id="flip-h-btn" title="Flip horizontally (H)">&#8596;</button>
+    <button class="orient-btn" id="flip-v-btn" title="Flip vertically (V)">&#8597;</button>
+    <button class="orient-btn" id="orient-reset-btn" title="Reset orientation (O)">&#10226;</button>
+  </div>
   <button id="theme-btn" title="Toggle light/dark theme (T)"></button>
 </div>
 
@@ -385,6 +394,8 @@
     <div class="legend-hint">Click node or label for code</div>
     <div class="legend-hint">(Shift+click a [+] node)</div>
     <div class="legend-hint">T to switch theme</div>
+    <div class="legend-hint">R / Shift+R rotate, H / V flip, O reset</div>
+    <div class="legend-hint">F to fit the view</div>
   </div>
 </div>
 
@@ -551,11 +562,7 @@
       const { svg } = await mermaid.render(id, themedSource(source));
       container.innerHTML = svg;
       if (keepView) {
-        const svgEl = container.querySelector('svg');
-        if (svgEl) {
-          svgEl.style.maxWidth = 'none';
-          svgEl.style.height = 'auto';
-        }
+        measureContent();
         applyTransform();
       } else {
         resetView();
@@ -566,37 +573,135 @@
     }
   }
 
+  // ---- Orientation (rotate / flip) ----
+  // The diagram is drawn as
+  //   translate(pan) scale(zoom) translate(W'/2, H'/2) matrix(M) translate(-W/2, -H/2)
+  // i.e. turned/mirrored about its own centre by M (a 90-degree rotation and/or
+  // flip, as CSS matrix(a, b, c, d)), then laid out at its oriented size W' x H'.
+  // M doesn't depend on zoom, so pan/zoom math (zoom-to-mouse, pinch) is unchanged.
+  const ORIENT_KEY = 'noodles-orientation';
+  const IDENTITY = [1, 0, 0, 1];
+  const ROTATE_CW = [0, 1, -1, 0];
+  const ROTATE_CCW = [0, -1, 1, 0];
+  const FLIP_H = [-1, 0, 0, 1];
+  const FLIP_V = [1, 0, 0, -1];
+  let orient = loadOrientation();
+  let contentW = 0, contentH = 0;  // natural (unrotated) diagram size at zoom 1
+
+  function loadOrientation() {
+    try {
+      const m = JSON.parse(localStorage.getItem(ORIENT_KEY));
+      // Accept only the 8 rotation/flip matrices: entries in {-1,0,1}, one non-zero per row/column
+      if (Array.isArray(m) && m.length === 4 && m.every(v => v === 0 || v === 1 || v === -1)
+          && Math.abs(m[0] * m[3] - m[1] * m[2]) === 1
+          && (m[0] === 0) === (m[3] === 0) && (m[1] === 0) === (m[2] === 0)
+          && (m[0] === 0) !== (m[1] === 0)) {
+        return m;
+      }
+    } catch (e) {}
+    return IDENTITY.slice();
+  }
+
+  // Compose CSS matrices: the result applies B first, then A
+  function multiply(A, B) {
+    return [
+      A[0] * B[0] + A[2] * B[1],
+      A[1] * B[0] + A[3] * B[1],
+      A[0] * B[2] + A[2] * B[3],
+      A[1] * B[2] + A[3] * B[3],
+    ];
+  }
+
+  function orientedSize(m = orient) {
+    return [
+      Math.abs(m[0]) * contentW + Math.abs(m[2]) * contentH,
+      Math.abs(m[1]) * contentW + Math.abs(m[3]) * contentH,
+    ];
+  }
+
+  function measureContent() {
+    const svgEl = container.querySelector('svg');
+    if (!svgEl) return;
+    svgEl.style.maxWidth = 'none';
+    svgEl.style.height = 'auto';
+    const saved = container.style.transform;
+    container.style.transform = 'none';
+    const rect = svgEl.getBoundingClientRect();
+    container.style.transform = saved;
+    contentW = rect.width;
+    contentH = rect.height;
+  }
+
+  // Change orientation while keeping the point at the centre of the view in place
+  function setOrientation(next) {
+    const areaRect = area.getBoundingClientRect();
+    const cx = areaRect.width / 2, cy = areaRect.height / 2;
+    const [ow, oh] = orientedSize();
+    // Centre point in the oriented frame, relative to the diagram's centre: M(p - c)
+    const fx = (cx - panX) / zoom - ow / 2;
+    const fy = (cy - panY) / zoom - oh / 2;
+    // Back to natural coordinates: M is orthogonal, so M^-1 = M^T
+    const [a, b, c, d] = orient;
+    const px = a * fx + b * fy;
+    const py = c * fx + d * fy;
+
+    orient = next;
+    try { localStorage.setItem(ORIENT_KEY, JSON.stringify(orient)); } catch (e) {}
+
+    const [a2, b2, c2, d2] = orient;
+    const [ow2, oh2] = orientedSize();
+    panX = cx - zoom * (a2 * px + c2 * py + ow2 / 2);
+    panY = cy - zoom * (b2 * px + d2 * py + oh2 / 2);
+    applyTransform();
+    updateOrientButtons();
+  }
+
+  function updateOrientButtons() {
+    const turned = orient.join(',') !== IDENTITY.join(',');
+    document.getElementById('orient-reset-btn').classList.toggle('active', turned);
+  }
+
+  function rotateCW() { setOrientation(multiply(ROTATE_CW, orient)); }
+  function rotateCCW() { setOrientation(multiply(ROTATE_CCW, orient)); }
+  // Flips mirror the diagram as it currently appears on screen
+  function flipH() { setOrientation(multiply(FLIP_H, orient)); }
+  function flipV() { setOrientation(multiply(FLIP_V, orient)); }
+  function resetOrientation() { setOrientation(IDENTITY.slice()); }
+
+  document.getElementById('rotate-cw-btn').addEventListener('click', rotateCW);
+  document.getElementById('rotate-ccw-btn').addEventListener('click', rotateCCW);
+  document.getElementById('flip-h-btn').addEventListener('click', flipH);
+  document.getElementById('flip-v-btn').addEventListener('click', flipV);
+  document.getElementById('orient-reset-btn').addEventListener('click', resetOrientation);
+  updateOrientButtons();
+
   function resetView() {
     zoom = 1;
     panX = 0;
     panY = 0;
+    measureContent();
 
-    // Reset transform first to measure natural SVG size
-    container.style.transform = 'none';
+    const areaRect = area.getBoundingClientRect();
+    const [ow, oh] = orientedSize();
+    if (ow > 0 && oh > 0) {
+      const scaleX = areaRect.width / ow;
+      const scaleY = areaRect.height / oh;
+      zoom = Math.min(scaleX, scaleY, 1.5) * 0.9;
 
-    const svgEl = container.querySelector('svg');
-    if (svgEl) {
-      svgEl.style.maxWidth = 'none';
-      svgEl.style.height = 'auto';
-      const svgRect = svgEl.getBoundingClientRect();
-      const areaRect = area.getBoundingClientRect();
-      if (svgRect.width > 0 && svgRect.height > 0) {
-        const scaleX = areaRect.width / svgRect.width;
-        const scaleY = areaRect.height / svgRect.height;
-        zoom = Math.min(scaleX, scaleY, 1.5) * 0.9;
-
-        // Center the diagram in the viewport
-        const scaledW = svgRect.width * zoom;
-        const scaledH = svgRect.height * zoom;
-        panX = (areaRect.width - scaledW) / 2;
-        panY = (areaRect.height - scaledH) / 2;
-      }
+      // Center the (oriented) diagram in the viewport
+      panX = (areaRect.width - ow * zoom) / 2;
+      panY = (areaRect.height - oh * zoom) / 2;
     }
     applyTransform();
   }
 
   function applyTransform() {
-    container.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    const [a, b, c, d] = orient;
+    const [ow, oh] = orientedSize();
+    container.style.transform =
+      `translate(${panX}px, ${panY}px) scale(${zoom}) ` +
+      `translate(${ow / 2}px, ${oh / 2}px) matrix(${a}, ${b}, ${c}, ${d}, 0, 0) ` +
+      `translate(${-contentW / 2}px, ${-contentH / 2}px)`;
   }
 
   // ---- Interactions: hover + click ----
@@ -998,8 +1103,22 @@
       } else {
         navigateBack();
       }
-    } else if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    } else if (e.ctrlKey || e.metaKey || e.altKey) {
+      return;
+    } else if (e.key === 't' || e.key === 'T') {
       setTheme(theme === 'dark' ? 'light' : 'dark', { save: true });
+    } else if (e.key === 'r') {
+      rotateCW();
+    } else if (e.key === 'R') {
+      rotateCCW();
+    } else if (e.key === 'h' || e.key === 'H') {
+      flipH();
+    } else if (e.key === 'v' || e.key === 'V') {
+      flipV();
+    } else if (e.key === 'o' || e.key === 'O') {
+      resetOrientation();
+    } else if (e.key === 'f' || e.key === 'F') {
+      resetView();
     }
   });
 })();
