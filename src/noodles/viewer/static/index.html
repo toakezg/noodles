@@ -220,6 +220,22 @@
     25%, 75% { opacity: 0.2; }
   }
   .svg-container .node.flash { animation: noodles-flash 0.6s ease-in-out 3; }
+
+  /* --- Trace on hover: the node, what it calls (amber) and what calls it (pink) --- */
+  :root { --trace-out: #ffb300; --trace-in: #ff4f9a; }
+  .svg-container svg .node,
+  .svg-container svg path.flowchart-link,
+  .svg-container svg .edgeLabels > .edgeLabel { transition: opacity 0.12s; }
+  .svg-container svg.tracing .node:not(.trace-on) { opacity: 0.15; }
+  .svg-container svg.tracing path.flowchart-link:not(.trace-on) { opacity: 0.06; }
+  .svg-container svg.tracing .edgeLabels > .edgeLabel:not(.trace-on) { opacity: 0.1; }
+  .svg-container svg.tracing path.flowchart-link.trace-out { stroke: var(--trace-out) !important; stroke-width: 2.5px !important; }
+  .svg-container svg.tracing path.flowchart-link.trace-in { stroke: var(--trace-in) !important; stroke-width: 2.5px !important; }
+  .svg-container svg.tracing .node.trace-out :is(rect, polygon, path, circle, ellipse) { stroke: var(--trace-out) !important; stroke-width: 3px !important; }
+  .svg-container svg.tracing .node.trace-in :is(rect, polygon, path, circle, ellipse) { stroke: var(--trace-in) !important; stroke-width: 3px !important; }
+  .svg-container svg.tracing .node.trace-focus :is(rect, polygon, path, circle, ellipse) { stroke-width: 4px !important; }
+  .svg-container svg.tracing .node.trace-focus { filter: drop-shadow(0 0 5px var(--link)); }
+  #trace-btn.active { border-color: var(--link); color: var(--link); }
   .pane-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pane-title .sep { color: var(--muted); margin: 0 3px; }
   .pane-btn {
@@ -429,6 +445,7 @@
     <button class="orient-btn split-mode-btn" data-mode="down" title="New pane below">&#9636;</button>
     <button class="orient-btn split-mode-btn" data-mode="grid" title="New pane, arranged in a grid">&#8862;</button>
   </div>
+  <button class="orient-btn" id="trace-btn" title="Trace on hover: highlight what a function calls and what calls it (L). Hold Shift for the whole chain." style="margin-left: 10px">Trace</button>
   <div id="orient-tools">
     <button class="orient-btn" id="rotate-ccw-btn" title="Rotate 90&deg; counter-clockwise (Shift+R)">&#8634;</button>
     <button class="orient-btn" id="rotate-cw-btn" title="Rotate 90&deg; clockwise (R)">&#8635;</button>
@@ -479,6 +496,10 @@
     <div class="legend-hint">R / Shift+R rotate, H / V flip, O reset</div>
     <div class="legend-hint">F to fit the view</div>
     <div class="legend-hint">Ctrl+click [+] for a new pane, X closes it</div>
+    <div class="legend-sep"></div>
+    <div class="legend-row"><span style="color:var(--trace-out);font-weight:700;width:20px;text-align:center">&#10230;</span><span>Calls (on hover)</span></div>
+    <div class="legend-row"><span style="color:var(--trace-in);font-weight:700;width:20px;text-align:center">&#10229;</span><span>Called by (on hover)</span></div>
+    <div class="legend-hint">Shift+hover: whole chain, L toggles</div>
   </div>
 </div>
 
@@ -920,6 +941,7 @@
       const svgEl = this.container.querySelector('svg');
       if (!svgEl) return;
       const nav = DATA.navigation[this.currentDiagram] || {};
+      this.buildGraph(svgEl);
 
       svgEl.querySelectorAll('.node').forEach(nodeEl => {
         const mermaidId = extractNodeId(nodeEl);
@@ -927,9 +949,19 @@
         const originalId = DATA.id_map[mermaidId];
         const meta = originalId ? DATA.nodes[originalId] : null;
 
-        nodeEl.addEventListener('mouseenter', (e) => showNodeTooltip(e, meta, mermaidId));
-        nodeEl.addEventListener('mousemove', (e) => positionTooltip(e));
-        nodeEl.addEventListener('mouseleave', () => hideTooltip());
+        nodeEl.addEventListener('mouseenter', (e) => {
+          showNodeTooltip(e, meta, mermaidId);
+          this.trace(mermaidId, e.shiftKey);
+        });
+        nodeEl.addEventListener('mousemove', (e) => {
+          positionTooltip(e);
+          // Pressing/releasing Shift while hovering switches between neighbours and the whole chain
+          if (this.tracedId === mermaidId && e.shiftKey !== this.traceChain) this.trace(mermaidId, e.shiftKey);
+        });
+        nodeEl.addEventListener('mouseleave', () => {
+          hideTooltip();
+          this.clearTrace();
+        });
 
         // Click: nodes with a sub-diagram open it (here, or in a new pane depending
         // on the split mode / Ctrl+click); Shift+click and other nodes show their code
@@ -966,6 +998,75 @@
           }
         });
       });
+    }
+
+    // -- trace on hover --
+    // Edges come from the diagram source ("a -.->|"label"| b", one per line). Mermaid
+    // gives the n-th edge's path the id L_<from>_<to>_<n>, and draws edge labels in
+    // the same order.
+    buildGraph(svgEl) {
+      const source = DATA.diagrams[this.currentDiagram] || '';
+      const re = /^\s*(\w+)\s+(?:-\.->|-->)(?:\|"[^"]*"\|)?\s+(\w+)\s*$/;
+      const edges = [];
+      source.split('\n').forEach(line => {
+        const m = line.match(re);
+        if (m) edges.push({ from: m[1], to: m[2] });
+      });
+      const labelEls = svgEl.querySelectorAll('.edgeLabels > .edgeLabel');
+      const labelsMatch = labelEls.length === edges.length;
+      edges.forEach((edge, i) => {
+        edge.el = svgEl.querySelector(`[id="L_${edge.from}_${edge.to}_${i}"]`);
+        edge.labelEl = labelsMatch ? labelEls[i] : null;
+      });
+      const nodeEls = new Map();
+      svgEl.querySelectorAll('.node').forEach(n => {
+        const id = extractNodeId(n);
+        if (id) nodeEls.set(id, n);
+      });
+      this.graph = { svgEl, edges, nodeEls };
+      this.tracedId = null;
+    }
+
+    // Highlight a node, what it calls and what calls it; with chain, follow both all the way
+    trace(id, chain) {
+      if (!traceEnabled || !this.graph) return;
+      this.clearTrace();
+      this.tracedId = id;
+      this.traceChain = chain;
+      const { svgEl, edges, nodeEls } = this.graph;
+      const mark = (el, ...cls) => { if (el) el.classList.add('trace-on', ...cls); };
+
+      const follow = (fromKey, toKey, cls) => {
+        const seen = new Set([id]);
+        let frontier = new Set([id]);
+        while (frontier.size) {
+          const next = new Set();
+          edges.forEach(e => {
+            if (!frontier.has(e[fromKey])) return;
+            mark(e.el, cls);
+            mark(e.labelEl, cls);
+            if (!seen.has(e[toKey])) {
+              seen.add(e[toKey]);
+              next.add(e[toKey]);
+              mark(nodeEls.get(e[toKey]), cls);
+            }
+          });
+          frontier = chain ? next : new Set();
+        }
+      };
+      follow('from', 'to', 'trace-out');   // what it calls
+      follow('to', 'from', 'trace-in');    // what calls it
+      mark(nodeEls.get(id), 'trace-focus');
+      svgEl.classList.add('tracing');
+    }
+
+    clearTrace() {
+      if (!this.graph) return;
+      this.tracedId = null;
+      const svgEl = this.graph.svgEl;
+      svgEl.classList.remove('tracing');
+      svgEl.querySelectorAll('.trace-on').forEach(el =>
+        el.classList.remove('trace-on', 'trace-out', 'trace-in', 'trace-focus'));
     }
 
     // Outline + glow, in the link colour: the [+] nodes whose sub-diagrams are open
@@ -1221,6 +1322,21 @@
     });
     return div;
   }
+
+  // ---- Trace on hover (toggle) ----
+  const TRACE_KEY = 'noodles-trace';
+  const traceBtn = document.getElementById('trace-btn');
+  let traceEnabled = true;
+  try { traceEnabled = localStorage.getItem(TRACE_KEY) !== 'off'; } catch (e) {}
+
+  function setTrace(on) {
+    traceEnabled = on;
+    try { localStorage.setItem(TRACE_KEY, on ? 'on' : 'off'); } catch (e) {}
+    traceBtn.classList.toggle('active', on);
+    if (!on) panes.forEach(p => p.clearTrace());
+  }
+  traceBtn.addEventListener('click', () => setTrace(!traceEnabled));
+  traceBtn.classList.toggle('active', traceEnabled);
 
   // ---- Split mode ----
   const SPLIT_KEY = 'noodles-split-mode';
@@ -1554,6 +1670,8 @@
       if (activePane) activePane.resetView();
     } else if (e.key === 'x' || e.key === 'X') {
       if (activePane) closePane(activePane);
+    } else if (e.key === 'l' || e.key === 'L') {
+      setTrace(!traceEnabled);
     }
   });
 })();
