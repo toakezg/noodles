@@ -131,6 +131,7 @@ Once configured, Claude Code can use these tools:
 - **Zoom** - Scroll wheel
 - **Drill down** - Click `[+]` nodes
 - **Back** - Escape
+- **Light/dark theme** - The button in the top bar, or `T`. The viewer follows your OS theme by default and remembers your choice. To default to one theme, set `NOODLES_THEME=dark` (or `light`) in the environment or `.env`, or pass `noodles viewer <dir> --theme dark`.
 
 ## Supported languages
 

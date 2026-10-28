@@ -1,21 +1,32 @@
 """Load a result folder and build the data bundle for the viewer."""
 
 import json
+import os
 import re
 from pathlib import Path
 
 from noodles.utils import _sanitize_id
 
+VIEWER_THEMES = ("auto", "light", "dark")
 
-def load_result(result_dir: str | Path) -> dict:
+
+def resolve_theme(theme: str | None = None) -> str:
+    """Default viewer theme: the given value, else $NOODLES_THEME, else "auto" (follow the OS)."""
+    value = (theme or os.environ.get("NOODLES_THEME") or "auto").strip().lower()
+    return value if value in VIEWER_THEMES else "auto"
+
+
+def load_result(result_dir: str | Path, theme: str | None = None) -> dict:
     """Load a result folder and return the viewer data bundle.
 
     Args:
         result_dir: Path to the result folder containing call_graph.json
                     and diagram_*.mmd files.
+        theme: Default viewer theme ("auto", "light" or "dark"). Defaults to
+               $NOODLES_THEME, else "auto". A theme chosen in the viewer wins.
 
     Returns:
-        Dict with keys: diagrams, navigation, nodes, edges, id_map
+        Dict with keys: diagrams, navigation, nodes, edges, id_map, theme
     """
     result_path = Path(result_dir)
 
@@ -119,6 +130,7 @@ def load_result(result_dir: str | Path) -> dict:
         "nodes": nodes,
         "edges": edges,
         "id_map": id_map,
+        "theme": resolve_theme(theme),
     }
 
 
@@ -143,21 +155,24 @@ def write_viewer_files(result_dir: str | Path) -> None:
 
     viewer_html = generate_viewer_html(result_path)
     viewer_html_file = result_path / "viewer.html"
-    viewer_html_file.write_text(viewer_html)
+    # Explicit UTF-8: the page declares UTF-8, and Windows' default encoding
+    # can't represent every character in descriptions/source
+    viewer_html_file.write_text(viewer_html, encoding="utf-8")
     print(f"  Viewer HTML:   {viewer_html_file}")
 
 
-def generate_viewer_html(result_dir: str | Path) -> str:
+def generate_viewer_html(result_dir: str | Path, theme: str | None = None) -> str:
     """Generate a self-contained HTML viewer with embedded data.
 
     Args:
         result_dir: Path to the result folder containing call_graph.json
                     and diagram_*.mmd files.
+        theme: Default viewer theme ("auto", "light" or "dark"), see load_result.
 
     Returns:
         Complete HTML string that can be saved as viewer.html.
     """
-    bundle = load_result(result_dir)
+    bundle = load_result(result_dir, theme=theme)
     template_path = Path(__file__).parent / "static/index.html"
     template = template_path.read_text(encoding="utf-8")
 

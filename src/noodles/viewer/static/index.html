@@ -8,10 +8,82 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /* --- Theme colours (light default, dark via [data-theme="dark"]) --- */
+  :root {
+    color-scheme: light;
+    --bg: #fff;
+    --fg: #333;
+    --bar-bg: #f5f5f5;
+    --border: #ddd;
+    --btn-border: #ccc;
+    --btn-fg: #555;
+    --btn-hover: #e0e0e0;
+    --link: #1a73e8;
+    --link-hover-bg: #e8f0fe;
+    --muted: #999;
+    --error: #f66;
+    --tt-bg: #fff;
+    --tt-strong: #222;
+    --tt-desc: #555;
+    --tt-file: #888;
+    --tt-sep: #eee;
+    --tt-row: #666;
+    --tt-update: #f57f17;
+    --shadow: rgba(0, 0, 0, 0.12);
+    --legend-bg: rgba(255, 255, 255, 0.92);
+    --legend-fg: #555;
+    --legend-sep: #e0e0e0;
+    --legend-hint: #888;
+    --badge-start-bg: #e0f2f1;    --badge-start-fg: #00695c;
+    --badge-process-bg: #d6e4f0;  --badge-process-fg: #1a4a7a;
+    --badge-end-bg: #f8d7da;      --badge-end-fg: #721c24;
+    --badge-updated-bg: #fff9c4;  --badge-updated-fg: #f57f17;
+    --badge-new-bg: #c8e6c9;      --badge-new-fg: #2e7d32;
+    --lg-process-fill: #e3f2fd;
+    --lg-end-fill: #fce4ec;
+    --lg-updated-fill: #fff9c4;
+    --lg-new-fill: #c8e6c9;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1e1f22;
+    --fg: #d4d4d4;
+    --bar-bg: #2b2d30;
+    --border: #3c3f44;
+    --btn-border: #555;
+    --btn-fg: #c8c8c8;
+    --btn-hover: #3a3d41;
+    --link: #8ab4f8;
+    --link-hover-bg: #2d3748;
+    --muted: #8a8a8a;
+    --error: #ff8a80;
+    --tt-bg: #2b2d30;
+    --tt-strong: #eee;
+    --tt-desc: #bbb;
+    --tt-file: #999;
+    --tt-sep: #3c3f44;
+    --tt-row: #aaa;
+    --tt-update: #ffb74d;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --legend-bg: rgba(43, 45, 48, 0.92);
+    --legend-fg: #c8c8c8;
+    --legend-sep: #3c3f44;
+    --legend-hint: #8a8a8a;
+    --badge-start-bg: #12312e;    --badge-start-fg: #80cbc4;
+    --badge-process-bg: #1c2f45;  --badge-process-fg: #90caf9;
+    --badge-end-bg: #3d1d21;      --badge-end-fg: #ef9a9a;
+    --badge-updated-bg: #3d340c;  --badge-updated-fg: #ffe082;
+    --badge-new-bg: #1b3320;      --badge-new-fg: #a5d6a7;
+    --lg-process-fill: #1c2f45;
+    --lg-end-fill: #3d1d21;
+    --lg-updated-fill: #3d340c;
+    --lg-new-fill: #1b3320;
+  }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #fff;
-    color: #333;
+    background: var(--bg);
+    color: var(--fg);
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -24,25 +96,26 @@
     align-items: center;
     gap: 8px;
     padding: 10px 16px;
-    background: #f5f5f5;
-    border-bottom: 1px solid #ddd;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     min-height: 44px;
   }
 
-  #back-btn {
+  #back-btn, #theme-btn {
     background: none;
-    border: 1px solid #ccc;
-    color: #555;
+    border: 1px solid var(--btn-border);
+    color: var(--btn-fg);
     padding: 4px 12px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
     white-space: nowrap;
   }
-  #back-btn:hover { background: #e0e0e0; }
+  #back-btn:hover, #theme-btn:hover { background: var(--btn-hover); }
   #back-btn:disabled { opacity: 0.3; cursor: default; }
   #back-btn:disabled:hover { background: none; }
+  #theme-btn { margin-left: auto; }
 
   #breadcrumb {
     display: flex;
@@ -53,20 +126,20 @@
   }
 
   .crumb {
-    color: #1a73e8;
+    color: var(--link);
     cursor: pointer;
     padding: 2px 6px;
     border-radius: 3px;
   }
-  .crumb:hover { background: #e8f0fe; }
+  .crumb:hover { background: var(--link-hover-bg); }
   .crumb.current {
-    color: #333;
+    color: var(--fg);
     cursor: default;
     font-weight: 600;
   }
   .crumb.current:hover { background: none; }
 
-  .crumb-sep { color: #999; margin: 0 2px; }
+  .crumb-sep { color: var(--muted); margin: 0 2px; }
 
   /* --- Diagram area --- */
   #diagram-area {
@@ -91,19 +164,22 @@
     stroke-width: 2.5px;
   }
 
+  .render-error { padding: 40px; color: var(--error); }
+
   /* --- Tooltip --- */
   #tooltip {
     display: none;
     position: fixed;
     z-index: 1000;
-    background: #fff;
-    border: 1px solid #ddd;
+    background: var(--tt-bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px 16px;
     max-width: 420px;
     font-size: 13px;
     line-height: 1.5;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    box-shadow: 0 4px 16px var(--shadow);
     pointer-events: none;
     word-wrap: break-word;
     overflow-wrap: break-word;
@@ -111,7 +187,7 @@
   #tooltip .tt-name {
     font-weight: 700;
     font-size: 14px;
-    color: #222;
+    color: var(--tt-strong);
     margin-bottom: 4px;
   }
   #tooltip .tt-badge {
@@ -122,29 +198,29 @@
     margin-left: 6px;
     font-weight: 400;
   }
-  #tooltip .tt-badge.start_point { background: #e0f2f1; color: #00695c; }
-  #tooltip .tt-badge.process { background: #d6e4f0; color: #1a4a7a; }
-  #tooltip .tt-badge.end_point { background: #f8d7da; color: #721c24; }
-  #tooltip .tt-badge.updated { background: #fff9c4; color: #f57f17; }
-  #tooltip .tt-badge.new { background: #c8e6c9; color: #2e7d32; }
-  #tooltip .tt-desc { color: #555; margin-bottom: 6px; }
+  #tooltip .tt-badge.start_point { background: var(--badge-start-bg); color: var(--badge-start-fg); }
+  #tooltip .tt-badge.process { background: var(--badge-process-bg); color: var(--badge-process-fg); }
+  #tooltip .tt-badge.end_point { background: var(--badge-end-bg); color: var(--badge-end-fg); }
+  #tooltip .tt-badge.updated { background: var(--badge-updated-bg); color: var(--badge-updated-fg); }
+  #tooltip .tt-badge.new { background: var(--badge-new-bg); color: var(--badge-new-fg); }
+  #tooltip .tt-desc { color: var(--tt-desc); margin-bottom: 6px; }
   #tooltip .tt-file {
-    color: #888;
+    color: var(--tt-file);
     font-size: 12px;
     font-family: monospace;
     word-break: break-all;
   }
   #tooltip .tt-update {
-    color: #f57f17;
+    color: var(--tt-update);
     font-style: italic;
     margin-top: 6px;
     padding-top: 6px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--tt-sep);
     font-size: 12px;
   }
-  #tooltip .tt-edge-label { font-weight: 600; color: #1a73e8; margin-bottom: 4px; }
-  #tooltip .tt-row { color: #666; font-size: 12px; }
-  #tooltip .tt-row span { color: #333; }
+  #tooltip .tt-edge-label { font-weight: 600; color: var(--link); margin-bottom: 4px; }
+  #tooltip .tt-row { color: var(--tt-row); font-size: 12px; }
+  #tooltip .tt-row span { color: var(--fg); }
 
   /* --- Legend --- */
   #legend {
@@ -152,14 +228,14 @@
     top: 12px;
     right: 12px;
     z-index: 100;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #ddd;
+    background: var(--legend-bg);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 12px;
-    color: #555;
+    color: var(--legend-fg);
     line-height: 1.6;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 8px var(--shadow);
     pointer-events: auto;
   }
   #legend .legend-row {
@@ -169,11 +245,11 @@
     height: 22px;
   }
   #legend .legend-sep {
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--legend-sep);
     margin: 6px 0;
   }
   #legend .legend-hint {
-    color: #888;
+    color: var(--legend-hint);
     font-size: 11px;
     padding-left: 2px;
   }
@@ -186,15 +262,27 @@
     align-items: center;
     justify-content: center;
     font-size: 16px;
-    color: #999;
+    color: var(--muted);
   }
 </style>
+<script>
+  // Apply the theme before first paint: saved choice, else the OS preference.
+  (function() {
+    var theme = null;
+    try { theme = localStorage.getItem('noodles-theme'); } catch (e) {}
+    if (theme !== 'light' && theme !== 'dark') {
+      theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
 </head>
 <body>
 
 <div id="breadcrumb-bar">
   <button id="back-btn" disabled>&larr; Back</button>
   <div id="breadcrumb"></div>
+  <button id="theme-btn" title="Toggle light/dark theme (T)"></button>
 </div>
 
 <div id="diagram-area">
@@ -206,30 +294,31 @@
       <span>Start Point</span>
     </div>
     <div class="legend-row">
-      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" fill="#e3f2fd" stroke="#64b5f6" stroke-width="1.5"/></svg>
+      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" style="fill:var(--lg-process-fill)" stroke="#64b5f6" stroke-width="1.5"/></svg>
       <span>Process</span>
     </div>
     <div class="legend-row">
-      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" rx="7" fill="#fce4ec" stroke="#e57373" stroke-width="1.5"/></svg>
+      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" rx="7" style="fill:var(--lg-end-fill)" stroke="#e57373" stroke-width="1.5"/></svg>
       <span>End Point</span>
     </div>
     <div class="legend-sep"></div>
     <div class="legend-row">
-      <span style="font-size:11px;font-weight:600;color:#555;width:20px;text-align:center">[+]</span>
+      <span style="font-size:11px;font-weight:600;color:var(--legend-fg);width:20px;text-align:center">[+]</span>
       <span>Has subdiagram</span>
     </div>
     <div class="legend-sep"></div>
     <div class="legend-row">
-      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" fill="#fff9c4" stroke="#f9a825" stroke-width="1.5"/></svg>
+      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" style="fill:var(--lg-updated-fill)" stroke="#f9a825" stroke-width="1.5"/></svg>
       <span>Updated</span>
     </div>
     <div class="legend-row">
-      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" fill="#c8e6c9" stroke="#66bb6a" stroke-width="1.5"/></svg>
+      <svg width="20" height="16" viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" style="fill:var(--lg-new-fill)" stroke="#66bb6a" stroke-width="1.5"/></svg>
       <span>New</span>
     </div>
     <div class="legend-sep"></div>
     <div class="legend-hint">Click [+] node to jump</div>
     <div class="legend-hint">Hover node for details</div>
+    <div class="legend-hint">T to switch theme</div>
   </div>
 </div>
 
@@ -271,14 +360,90 @@
   const breadcrumb = document.getElementById('breadcrumb');
   const backBtn = document.getElementById('back-btn');
   const loading = document.getElementById('loading');
+  const themeBtn = document.getElementById('theme-btn');
+
+  // ---- Theme ----
+  // Priority: the viewer's saved choice > the result's default (NOODLES_THEME) > OS preference.
+  const THEME_KEY = 'noodles-theme';
+  let theme = document.documentElement.getAttribute('data-theme') || 'light';
+  let themeDefaultApplied = false;
+
+  // Diagram class colours are written for a light background; brighter text
+  // and darker fills keep them readable on dark.
+  const DARK_CLASSDEFS = {
+    start: 'fill:none,stroke:#4db6ac,color:#80cbc4',
+    process: 'fill:none,stroke:#64b5f6,color:#90caf9',
+    endpoint: 'fill:none,stroke:#e57373,color:#ef9a9a',
+    updated: 'fill:#3d340c,stroke:#f9a825,color:#ffe082',
+    new: 'fill:#1b3320,stroke:#66bb6a,color:#a5d6a7',
+  };
+
+  function savedTheme() {
+    try {
+      const t = localStorage.getItem(THEME_KEY);
+      return t === 'light' || t === 'dark' ? t : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function initMermaid() {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme === 'dark' ? 'dark' : 'default',
+      flowchart: { curve: 'basis', useMaxWidth: false },
+      securityLevel: 'strict',
+    });
+  }
+
+  function themedSource(source) {
+    if (theme !== 'dark') return source;
+    return source.replace(/^(\s*classDef\s+)(\w+)\s+.*$/gm, (line, prefix, cls) =>
+      DARK_CLASSDEFS[cls] ? prefix + cls + ' ' + DARK_CLASSDEFS[cls] : line
+    );
+  }
+
+  function setTheme(next, { save = false } = {}) {
+    theme = next;
+    document.documentElement.setAttribute('data-theme', theme);
+    themeBtn.textContent = theme === 'dark' ? 'Light' : 'Dark';
+    if (save) {
+      try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+    }
+    initMermaid();
+    if (currentDiagram) renderDiagram(currentDiagram, { keepView: true });
+  }
+
+  // Once data has loaded, use the result's default theme unless the viewer chose one
+  function applyDefaultTheme() {
+    if (themeDefaultApplied) return;
+    themeDefaultApplied = true;
+    const preset = DATA && DATA.theme;
+    if (!savedTheme() && (preset === 'light' || preset === 'dark') && preset !== theme) {
+      theme = preset;
+      document.documentElement.setAttribute('data-theme', theme);
+      themeBtn.textContent = theme === 'dark' ? 'Light' : 'Dark';
+      initMermaid();
+    }
+  }
+
+  themeBtn.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  themeBtn.addEventListener('click', () => setTheme(theme === 'dark' ? 'light' : 'dark', { save: true }));
+
+  // Follow OS changes while nothing has been chosen explicitly
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e) => {
+      const preset = DATA && DATA.theme;
+      if (!savedTheme() && preset !== 'light' && preset !== 'dark') {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+  }
 
   // ---- Init ----
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'default',
-    flowchart: { curve: 'basis', useMaxWidth: false },
-    securityLevel: 'strict',
-  });
+  initMermaid();
 
   fetch('/api/data')
     .then(r => r.json())
@@ -294,11 +459,12 @@
   // ---- Rendering ----
   let renderCounter = 0;
 
-  async function renderDiagram(name) {
+  async function renderDiagram(name, { keepView = false } = {}) {
+    applyDefaultTheme();
     currentDiagram = name;
     const source = DATA.diagrams[name];
     if (!source) {
-      container.innerHTML = '<p style="padding:40px;color:#f66">Diagram not found: ' + name + '</p>';
+      container.innerHTML = '<p class="render-error">Diagram not found: ' + escapeHtml(name) + '</p>';
       return;
     }
 
@@ -306,12 +472,21 @@
     const id = 'mermaid-' + renderCounter;
 
     try {
-      const { svg } = await mermaid.render(id, source);
+      const { svg } = await mermaid.render(id, themedSource(source));
       container.innerHTML = svg;
-      resetView();
+      if (keepView) {
+        const svgEl = container.querySelector('svg');
+        if (svgEl) {
+          svgEl.style.maxWidth = 'none';
+          svgEl.style.height = 'auto';
+        }
+        applyTransform();
+      } else {
+        resetView();
+      }
       attachInteractions();
     } catch (err) {
-      container.innerHTML = '<p style="padding:40px;color:#f66">Render error: ' + err.message + '</p>';
+      container.innerHTML = '<p class="render-error">Render error: ' + escapeHtml(err.message) + '</p>';
     }
   }
 
@@ -612,6 +787,8 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       navigateBack();
+    } else if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      setTheme(theme === 'dark' ? 'light' : 'dark', { save: true });
     }
   });
 })();

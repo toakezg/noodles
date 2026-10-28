@@ -51,6 +51,12 @@ def main():
     viewer_parser.add_argument(
         "--port", type=int, default=0, help="Port (0=auto)"
     )
+    viewer_parser.add_argument(
+        "--theme",
+        choices=["auto", "light", "dark"],
+        help="Default theme (default: $NOODLES_THEME, else follow the OS). "
+        "A theme picked in the viewer is remembered and takes precedence.",
+    )
 
     # noodles mcp
     subparsers.add_parser(
@@ -111,11 +117,14 @@ def _run_viewer(args):
     """Run the interactive viewer."""
     import webbrowser
 
+    from dotenv import load_dotenv
+
     from noodles.viewer.data_loader import load_result
     from noodles.viewer.server import start_server
 
+    load_dotenv()  # picks up NOODLES_THEME from .env, like the analyzers do
     try:
-        data = load_result(args.result_dir)
+        data = load_result(args.result_dir, theme=args.theme)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
