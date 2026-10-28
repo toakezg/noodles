@@ -193,6 +193,33 @@
     flex-shrink: 0;
   }
   #panes.multi .pane-header { display: flex; }
+
+  /* A pane opened from a [+] node: framed in its link colour, matching the
+     outline on that node in the parent pane */
+  .pane.linked::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    border: 3px solid var(--pane-color); z-index: 4;
+  }
+  #panes.multi .pane.linked.active::after { inset: 3px; }
+  .pane-origin {
+    display: none;
+    background: none;
+    border: 1px solid var(--pane-color);
+    color: var(--fg);
+    border-radius: 10px;
+    padding: 0 8px;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .pane.linked .pane-origin { display: inline-block; }
+  .pane-origin .dot { color: var(--pane-color); }
+  .pane-origin:hover { background: var(--btn-hover); }
+  @keyframes noodles-flash {
+    0%, 50%, 100% { opacity: 1; }
+    25%, 75% { opacity: 0.2; }
+  }
+  .svg-container .node.flash { animation: noodles-flash 0.6s ease-in-out 3; }
   .pane-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pane-title .sep { color: var(--muted); margin: 0 3px; }
   .pane-btn {
@@ -671,6 +698,7 @@
       this.el.innerHTML =
         '<div class="pane-header">' +
         '<button class="pane-btn pane-back" title="Back">&larr;</button>' +
+        '<button class="pane-origin" title="Show the [+] node this pane was opened from"></button>' +
         '<span class="pane-title"></span>' +
         '<button class="pane-btn pane-fit" title="Fit (F)">Fit</button>' +
         '<button class="pane-btn pane-close" title="Close pane (X)">&times;</button>' +
@@ -682,6 +710,9 @@
       this.area = this.el.querySelector('.pane-area');
       this.container = this.el.querySelector('.svg-container');
 
+      this.originEl = this.el.querySelector('.pane-origin');
+      this.originEl.addEventListener('click', (e) => { e.stopPropagation(); this.locateOrigin(true); });
+      this.originEl.addEventListener('mouseenter', () => this.locateOrigin(false));
       this.backEl.addEventListener('click', () => this.navigateBack());
       this.el.querySelector('.pane-fit').addEventListener('click', () => this.resetView());
       this.el.querySelector('.pane-close').addEventListener('click', (e) => { e.stopPropagation(); closePane(this); });
@@ -937,17 +968,64 @@
       });
     }
 
-    // Glow the [+] nodes whose sub-diagrams are open in other panes, in that pane's colour
+    // Outline + glow, in the link colour: the [+] nodes whose sub-diagrams are open
+    // in other panes, and (in a linked pane) the function it was opened for
     applyLinks() {
       const svgEl = this.container.querySelector('svg');
       if (!svgEl) return;
       svgEl.querySelectorAll('.node').forEach(nodeEl => {
-        const link = this.links.find(l => l.mermaidId === extractNodeId(nodeEl));
-        nodeEl.style.filter = link
-          ? `drop-shadow(0 0 3px ${link.color}) drop-shadow(0 0 6px ${link.color})`
-          : '';
+        const mermaidId = extractNodeId(nodeEl);
+        const link = this.links.find(l => l.mermaidId === mermaidId);
+        let color = link ? link.color : null;
+        if (!color && this.originId && DATA.id_map[mermaidId] === this.originId) color = this.color;
+        markNode(nodeEl, color);
       });
     }
+
+    // Find the [+] node this pane came from; centre on it when asked, and flash it
+    locateOrigin(centre) {
+      if (!this.origin || !panes.includes(this.origin.pane)) return;
+      const parent = this.origin.pane;
+      const nodeEl = Array.from(parent.container.querySelectorAll('.node'))
+        .find(n => extractNodeId(n) === this.origin.mermaidId);
+      if (!nodeEl) return;  // the parent pane has since navigated elsewhere
+      if (centre) {
+        const r = nodeEl.getBoundingClientRect();
+        const a = parent.area.getBoundingClientRect();
+        parent.panX += (a.left + a.width / 2) - (r.left + r.width / 2);
+        parent.panY += (a.top + a.height / 2) - (r.top + r.height / 2);
+        parent.applyTransform();
+      }
+      flashNode(nodeEl);
+    }
+  }
+
+  const NODE_SHAPES = 'rect, polygon, path, circle, ellipse';
+
+  function markNode(nodeEl, color) {
+    if (color) {
+      nodeEl.dataset.marked = '1';
+      nodeEl.style.filter = `drop-shadow(0 0 3px ${color}) drop-shadow(0 0 7px ${color})`;
+      nodeEl.querySelectorAll(NODE_SHAPES).forEach(s => {
+        s.style.stroke = color;
+        s.style.strokeWidth = '4px';
+      });
+    } else if (nodeEl.dataset.marked) {
+      delete nodeEl.dataset.marked;
+      nodeEl.style.filter = '';
+      nodeEl.querySelectorAll(NODE_SHAPES).forEach(s => {
+        s.style.stroke = '';
+        s.style.strokeWidth = '';
+      });
+    }
+  }
+
+  function flashNode(nodeEl) {
+    nodeEl.classList.remove('flash');
+    void nodeEl.getBoundingClientRect();  // restart the animation
+    nodeEl.classList.add('flash');
+    clearTimeout(nodeEl._flashTimer);
+    nodeEl._flashTimer = setTimeout(() => nodeEl.classList.remove('flash'), 1900);
   }
 
   // ---- Pane management ----
@@ -969,7 +1047,12 @@
     const child = createPane();
     child.color = LINK_COLORS[nextColor++ % LINK_COLORS.length];
     child.origin = { pane: source, mermaidId };
+    child.originId = DATA.id_map[mermaidId];  // the function drilled into, highlighted in the child too
     child.header.style.borderLeftColor = child.color;
+    child.el.classList.add('linked');
+    child.el.style.setProperty('--pane-color', child.color);
+    const fromTitle = source.navStack.length ? source.navStack[source.navStack.length - 1].title : 'parent';
+    child.originEl.innerHTML = '<span class="dot">&#9679;</span> from ' + escapeHtml(fromTitle);
     child.navStack = source.navStack.slice();  // keep the path from the root for its breadcrumb
     source.links.push({ mermaidId, color: child.color, child });
     source.applyLinks();
@@ -993,7 +1076,11 @@
       parent.links = parent.links.filter(l => l.child !== pane);
       parent.applyLinks();
     }
-    pane.links.forEach(l => { l.child.origin = null; });
+    // Children keep their colour frame, but there's no source left to point at
+    pane.links.forEach(l => {
+      l.child.origin = null;
+      l.child.originEl.style.display = 'none';
+    });
     panes = panes.filter(p => p !== pane);
     removeLeaf(pane);
     relayout();
