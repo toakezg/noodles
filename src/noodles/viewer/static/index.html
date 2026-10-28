@@ -125,7 +125,9 @@
   #back-btn:hover, #theme-btn:hover, .orient-btn:hover { background: var(--btn-hover); }
   #back-btn:disabled { opacity: 0.3; cursor: default; }
   #back-btn:disabled:hover { background: none; }
-  #orient-tools { margin-left: auto; display: flex; gap: 4px; }
+  #split-tools { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  #split-tools .tools-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+  #orient-tools { margin-left: 10px; display: flex; gap: 4px; }
   .orient-btn { padding: 4px 9px; }
   .orient-btn.active { border-color: var(--link); color: var(--link); }
 
@@ -160,18 +162,63 @@
     position: relative;
     cursor: grab;
   }
-  #diagram-area.panning { cursor: grabbing; }
+  #diagram-area.multi #legend { top: 40px; }
+  #legend .legend-toggle { cursor: pointer; font-weight: 600; user-select: none; }
+  #legend.collapsed > :not(.legend-toggle) { display: none; }
 
-  #svg-container {
+  /* --- Panes: a tree of splits; each leaf is one diagram with its own pan/zoom --- */
+  #panes { position: absolute; inset: 0; display: flex; }
+  .split { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .split.row { flex-direction: row; }
+  .split.col { flex-direction: column; }
+  .cell { position: relative; display: flex; min-width: 0; min-height: 0; }
+  .divider { flex: 0 0 6px; background: var(--border); cursor: col-resize; }
+  .split.col > .divider { cursor: row-resize; }
+  .divider:hover, .divider.dragging { background: var(--link); }
+
+  .pane { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #panes.multi .pane.active::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    border: 2px solid var(--link); z-index: 5;
+  }
+  .pane-header {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
+    border-left: 4px solid transparent;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  #panes.multi .pane-header { display: flex; }
+  .pane-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pane-title .sep { color: var(--muted); margin: 0 3px; }
+  .pane-btn {
+    background: none;
+    border: 1px solid var(--btn-border);
+    color: var(--btn-fg);
+    border-radius: 3px;
+    padding: 0 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pane-btn:hover { background: var(--btn-hover); }
+  .pane-btn:disabled { opacity: 0.3; cursor: default; }
+  .pane-area { position: relative; flex: 1; overflow: hidden; cursor: grab; }
+  .pane-area.panning { cursor: grabbing; }
+
+  .svg-container {
     position: absolute;
     transform-origin: 0 0;
   }
 
   /* Make clickable nodes stand out */
-  #svg-container .node.clickable { cursor: pointer; }
-  #svg-container .node.clickable:hover rect,
-  #svg-container .node.clickable:hover polygon,
-  #svg-container .node.clickable:hover .basic.label-container {
+  .svg-container .node.clickable { cursor: pointer; }
+  .svg-container .node.clickable:hover rect,
+  .svg-container .node.clickable:hover polygon,
+  .svg-container .node.clickable:hover .basic.label-container {
     filter: brightness(1.15);
     stroke-width: 2.5px;
   }
@@ -348,6 +395,13 @@
 <div id="breadcrumb-bar">
   <button id="back-btn" disabled>&larr; Back</button>
   <div id="breadcrumb"></div>
+  <div id="split-tools" title="Where a [+] node opens its sub-diagram">
+    <span class="tools-label">Open [+] in</span>
+    <button class="orient-btn split-mode-btn" data-mode="same" title="Same pane (default)">&#9634;</button>
+    <button class="orient-btn split-mode-btn" data-mode="right" title="New pane to the right">&#9707;</button>
+    <button class="orient-btn split-mode-btn" data-mode="down" title="New pane below">&#9636;</button>
+    <button class="orient-btn split-mode-btn" data-mode="grid" title="New pane, arranged in a grid">&#8862;</button>
+  </div>
   <div id="orient-tools">
     <button class="orient-btn" id="rotate-ccw-btn" title="Rotate 90&deg; counter-clockwise (Shift+R)">&#8634;</button>
     <button class="orient-btn" id="rotate-cw-btn" title="Rotate 90&deg; clockwise (R)">&#8635;</button>
@@ -359,9 +413,10 @@
 </div>
 
 <div id="diagram-area">
-  <div id="svg-container"></div>
+  <div id="panes"></div>
   <div id="loading">Loading diagrams...</div>
   <div id="legend">
+    <div class="legend-toggle" title="Show / hide the legend">Legend &#9662;</div>
     <div class="legend-row">
       <svg width="20" height="16" viewBox="0 0 20 16"><polygon points="5,0 15,0 20,8 15,16 5,16 0,8" fill="none" stroke="#4db6ac" stroke-width="1.5"/></svg>
       <span>Start Point</span>
@@ -396,6 +451,7 @@
     <div class="legend-hint">T to switch theme</div>
     <div class="legend-hint">R / Shift+R rotate, H / V flip, O reset</div>
     <div class="legend-hint">F to fit the view</div>
+    <div class="legend-hint">Ctrl+click [+] for a new pane, X closes it</div>
   </div>
 </div>
 
@@ -422,32 +478,21 @@
 
   // ---- State ----
   let DATA = null;       // data bundle from /api/data
-  let navStack = [];     // [{diagramName, title}]
-  let currentDiagram = null;
-
-  // Pan & zoom state
-  let zoom = 1;
-  let panX = 0, panY = 0;
-  let isPanning = false;
-  let panMoved = false;  // true once a drag moves, so the click that ends it is ignored
-  let panStartX = 0, panStartY = 0;
-  let panStartPanX = 0, panStartPanY = 0;
-
-  // Touch state
-  let lastTouchCenter = null;
-  let lastTouchDistance = null;
 
   const MIN_ZOOM = 0.1;
   const MAX_ZOOM = 5;
+  const MAX_PANES = 12;
 
   // DOM refs
-  const area = document.getElementById('diagram-area');
-  const container = document.getElementById('svg-container');
+  const diagramArea = document.getElementById('diagram-area');
+  const panesRoot = document.getElementById('panes');
   const tooltip = document.getElementById('tooltip');
   const breadcrumb = document.getElementById('breadcrumb');
   const backBtn = document.getElementById('back-btn');
   const loading = document.getElementById('loading');
   const themeBtn = document.getElementById('theme-btn');
+  const legend = document.getElementById('legend');
+  legend.querySelector('.legend-toggle').addEventListener('click', () => legend.classList.toggle('collapsed'));
 
   // ---- Theme ----
   // Priority: the viewer's saved choice > the result's default (NOODLES_THEME) > OS preference.
@@ -498,7 +543,7 @@
       try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
     }
     initMermaid();
-    if (currentDiagram) renderDiagram(currentDiagram, { keepView: true });
+    panes.forEach(p => { if (p.currentDiagram) p.render(p.currentDiagram, { keepView: true }); });
   }
 
   // Once data has loaded, use the result's default theme unless the viewer chose one
@@ -529,52 +574,8 @@
     if (mq.addEventListener) mq.addEventListener('change', onChange);
   }
 
-  // ---- Init ----
-  initMermaid();
-
-  fetch('/api/data')
-    .then(r => r.json())
-    .then(data => {
-      DATA = data;
-      loading.style.display = 'none';
-      navigateTo('main', 'Main');
-    })
-    .catch(err => {
-      loading.textContent = 'Failed to load data: ' + err.message;
-    });
-
-  // ---- Rendering ----
-  let renderCounter = 0;
-
-  async function renderDiagram(name, { keepView = false } = {}) {
-    applyDefaultTheme();
-    currentDiagram = name;
-    const source = DATA.diagrams[name];
-    if (!source) {
-      container.innerHTML = '<p class="render-error">Diagram not found: ' + escapeHtml(name) + '</p>';
-      return;
-    }
-
-    renderCounter++;
-    const id = 'mermaid-' + renderCounter;
-
-    try {
-      const { svg } = await mermaid.render(id, themedSource(source));
-      container.innerHTML = svg;
-      if (keepView) {
-        measureContent();
-        applyTransform();
-      } else {
-        resetView();
-      }
-      attachInteractions();
-    } catch (err) {
-      container.innerHTML = '<p class="render-error">Render error: ' + escapeHtml(err.message) + '</p>';
-    }
-  }
-
-  // ---- Orientation (rotate / flip) ----
-  // The diagram is drawn as
+  // ---- Orientation (rotate / flip), shared by all panes ----
+  // Each diagram is drawn as
   //   translate(pan) scale(zoom) translate(W'/2, H'/2) matrix(M) translate(-W/2, -H/2)
   // i.e. turned/mirrored about its own centre by M (a 90-degree rotation and/or
   // flip, as CSS matrix(a, b, c, d)), then laid out at its oriented size W' x H'.
@@ -586,7 +587,6 @@
   const FLIP_H = [-1, 0, 0, 1];
   const FLIP_V = [1, 0, 0, -1];
   let orient = loadOrientation();
-  let contentW = 0, contentH = 0;  // natural (unrotated) diagram size at zoom 1
 
   function loadOrientation() {
     try {
@@ -612,47 +612,12 @@
     ];
   }
 
-  function orientedSize(m = orient) {
-    return [
-      Math.abs(m[0]) * contentW + Math.abs(m[2]) * contentH,
-      Math.abs(m[1]) * contentW + Math.abs(m[3]) * contentH,
-    ];
-  }
-
-  function measureContent() {
-    const svgEl = container.querySelector('svg');
-    if (!svgEl) return;
-    svgEl.style.maxWidth = 'none';
-    svgEl.style.height = 'auto';
-    const saved = container.style.transform;
-    container.style.transform = 'none';
-    const rect = svgEl.getBoundingClientRect();
-    container.style.transform = saved;
-    contentW = rect.width;
-    contentH = rect.height;
-  }
-
-  // Change orientation while keeping the point at the centre of the view in place
+  // Change orientation while keeping the point at the centre of each pane in place
   function setOrientation(next) {
-    const areaRect = area.getBoundingClientRect();
-    const cx = areaRect.width / 2, cy = areaRect.height / 2;
-    const [ow, oh] = orientedSize();
-    // Centre point in the oriented frame, relative to the diagram's centre: M(p - c)
-    const fx = (cx - panX) / zoom - ow / 2;
-    const fy = (cy - panY) / zoom - oh / 2;
-    // Back to natural coordinates: M is orthogonal, so M^-1 = M^T
-    const [a, b, c, d] = orient;
-    const px = a * fx + b * fy;
-    const py = c * fx + d * fy;
-
+    const centres = panes.map(p => p.centrePoint());
     orient = next;
     try { localStorage.setItem(ORIENT_KEY, JSON.stringify(orient)); } catch (e) {}
-
-    const [a2, b2, c2, d2] = orient;
-    const [ow2, oh2] = orientedSize();
-    panX = cx - zoom * (a2 * px + c2 * py + ow2 / 2);
-    panY = cy - zoom * (b2 * px + d2 * py + oh2 / 2);
-    applyTransform();
+    panes.forEach((p, i) => p.centreOn(centres[i]));
     updateOrientButtons();
   }
 
@@ -675,88 +640,545 @@
   document.getElementById('orient-reset-btn').addEventListener('click', resetOrientation);
   updateOrientButtons();
 
-  function resetView() {
-    zoom = 1;
-    panX = 0;
-    panY = 0;
-    measureContent();
+  // ---- Rendering ----
+  // mermaid.render isn't safe to run concurrently, so renders from all panes are queued
+  let renderCounter = 0;
+  let renderQueue = Promise.resolve();
 
-    const areaRect = area.getBoundingClientRect();
-    const [ow, oh] = orientedSize();
-    if (ow > 0 && oh > 0) {
-      const scaleX = areaRect.width / ow;
-      const scaleY = areaRect.height / oh;
-      zoom = Math.min(scaleX, scaleY, 1.5) * 0.9;
+  // ---- Panes ----
+  // Accent colours linking a pane to the [+] node it was opened from
+  const LINK_COLORS = ['#ffb74d', '#ba68c8', '#4dd0e1', '#f06292', '#aed581', '#7986cb', '#ff8a65', '#4db6ac'];
+  let nextColor = 0;
+  let panes = [];
+  let activePane = null;
+  let layout = null;  // {kind: 'pane', pane} | {kind: 'split', dir: 'row'|'col', children, sizes}
 
-      // Center the (oriented) diagram in the viewport
-      panX = (areaRect.width - ow * zoom) / 2;
-      panY = (areaRect.height - oh * zoom) / 2;
+  class Pane {
+    constructor() {
+      this.navStack = [];          // [{name, title}]
+      this.currentDiagram = null;
+      this.zoom = 1;
+      this.panX = 0;
+      this.panY = 0;
+      this.contentW = 0;           // natural (unoriented) diagram size at zoom 1
+      this.contentH = 0;
+      this.color = null;           // accent colour when opened from another pane
+      this.origin = null;          // {pane, mermaidId} it was opened from
+      this.links = [];             // [{mermaidId, color, child}] panes opened from this one
+
+      this.el = document.createElement('div');
+      this.el.className = 'pane';
+      this.el.innerHTML =
+        '<div class="pane-header">' +
+        '<button class="pane-btn pane-back" title="Back">&larr;</button>' +
+        '<span class="pane-title"></span>' +
+        '<button class="pane-btn pane-fit" title="Fit (F)">Fit</button>' +
+        '<button class="pane-btn pane-close" title="Close pane (X)">&times;</button>' +
+        '</div>' +
+        '<div class="pane-area"><div class="svg-container"></div></div>';
+      this.header = this.el.querySelector('.pane-header');
+      this.titleEl = this.el.querySelector('.pane-title');
+      this.backEl = this.el.querySelector('.pane-back');
+      this.area = this.el.querySelector('.pane-area');
+      this.container = this.el.querySelector('.svg-container');
+
+      this.backEl.addEventListener('click', () => this.navigateBack());
+      this.el.querySelector('.pane-fit').addEventListener('click', () => this.resetView());
+      this.el.querySelector('.pane-close').addEventListener('click', (e) => { e.stopPropagation(); closePane(this); });
+      // Any interaction makes a pane the active one (breadcrumb, Esc, F, X act on it)
+      this.el.addEventListener('mousedown', () => setActivePane(this), true);
+      this.bindPanZoom();
     }
-    applyTransform();
-  }
 
-  function applyTransform() {
-    const [a, b, c, d] = orient;
-    const [ow, oh] = orientedSize();
-    container.style.transform =
-      `translate(${panX}px, ${panY}px) scale(${zoom}) ` +
-      `translate(${ow / 2}px, ${oh / 2}px) matrix(${a}, ${b}, ${c}, ${d}, 0, 0) ` +
-      `translate(${-contentW / 2}px, ${-contentH / 2}px)`;
-  }
+    // -- navigation --
+    navigateTo(name, title) {
+      this.navStack.push({ name, title: title || name });
+      this.render(name);
+      this.navChanged();
+    }
 
-  // ---- Interactions: hover + click ----
-  function attachInteractions() {
-    const svgEl = container.querySelector('svg');
-    if (!svgEl) return;
+    navigateBack() {
+      if (this.navStack.length <= 1) return;
+      this.navStack.pop();
+      this.render(this.navStack[this.navStack.length - 1].name);
+      this.navChanged();
+    }
 
-    const nav = DATA.navigation[currentDiagram] || {};
+    navigateToIndex(index) {
+      if (index >= this.navStack.length - 1) return;
+      this.navStack = this.navStack.slice(0, index + 1);
+      this.render(this.navStack[this.navStack.length - 1].name);
+      this.navChanged();
+    }
 
-    // Process nodes
-    const nodeEls = svgEl.querySelectorAll('.node');
-    nodeEls.forEach(nodeEl => {
-      const mermaidId = extractNodeId(nodeEl);
-      if (!mermaidId) return;
+    navChanged() {
+      this.titleEl.innerHTML = this.navStack
+        .map(item => escapeHtml(item.title))
+        .join('<span class="sep">&rsaquo;</span>');
+      this.titleEl.title = this.navStack.map(item => item.title).join(' > ');
+      this.backEl.disabled = this.navStack.length <= 1;
+      if (this === activePane) updateBreadcrumb();
+    }
 
-      const originalId = DATA.id_map[mermaidId];
-      const meta = originalId ? DATA.nodes[originalId] : null;
+    // -- rendering --
+    render(name, { keepView = false } = {}) {
+      this.currentDiagram = name;
+      renderQueue = renderQueue.then(() => this.doRender(name, keepView));
+      return renderQueue;
+    }
 
-      // Hover tooltip
-      nodeEl.addEventListener('mouseenter', (e) => showNodeTooltip(e, meta, mermaidId));
-      nodeEl.addEventListener('mousemove', (e) => positionTooltip(e));
-      nodeEl.addEventListener('mouseleave', () => hideTooltip());
+    async doRender(name, keepView) {
+      applyDefaultTheme();
+      if (this.currentDiagram !== name) return;  // superseded while queued
+      const source = DATA.diagrams[name];
+      if (!source) {
+        this.container.innerHTML = '<p class="render-error">Diagram not found: ' + escapeHtml(name) + '</p>';
+        return;
+      }
+      renderCounter++;
+      try {
+        const { svg } = await mermaid.render('mermaid-' + renderCounter, themedSource(source));
+        this.container.innerHTML = svg;
+        if (keepView) {
+          this.measureContent();
+          this.applyTransform();
+        } else {
+          this.resetView();
+        }
+        this.attachInteractions();
+        this.applyLinks();
+      } catch (err) {
+        this.container.innerHTML = '<p class="render-error">Render error: ' + escapeHtml(err.message) + '</p>';
+      }
+    }
 
-      // Click: nodes with a sub-diagram navigate (Shift+click shows code);
-      // other nodes show their code
-      nodeEl.classList.add('clickable');
-      nodeEl.addEventListener('click', (e) => {
-        e.stopPropagation();
-        hideTooltip();
-        if (nav[mermaidId] && !e.shiftKey) {
-          const targetDiagram = nav[mermaidId];
-          const title = meta ? meta.name : targetDiagram;
-          navigateTo(targetDiagram, title);
-        } else if (originalId) {
-          showNodeCode(originalId);
+    // -- geometry --
+    orientedSize(m = orient) {
+      return [
+        Math.abs(m[0]) * this.contentW + Math.abs(m[2]) * this.contentH,
+        Math.abs(m[1]) * this.contentW + Math.abs(m[3]) * this.contentH,
+      ];
+    }
+
+    measureContent() {
+      const svgEl = this.container.querySelector('svg');
+      if (!svgEl) return;
+      svgEl.style.maxWidth = 'none';
+      svgEl.style.height = 'auto';
+      const saved = this.container.style.transform;
+      this.container.style.transform = 'none';
+      const rect = svgEl.getBoundingClientRect();
+      this.container.style.transform = saved;
+      this.contentW = rect.width;
+      this.contentH = rect.height;
+    }
+
+    resetView() {
+      this.zoom = 1;
+      this.panX = 0;
+      this.panY = 0;
+      this.measureContent();
+      const areaRect = this.area.getBoundingClientRect();
+      const [ow, oh] = this.orientedSize();
+      if (ow > 0 && oh > 0 && areaRect.width > 0 && areaRect.height > 0) {
+        this.zoom = Math.min(areaRect.width / ow, areaRect.height / oh, 1.5) * 0.9;
+        // Center the (oriented) diagram in the pane
+        this.panX = (areaRect.width - ow * this.zoom) / 2;
+        this.panY = (areaRect.height - oh * this.zoom) / 2;
+      }
+      this.applyTransform();
+    }
+
+    applyTransform() {
+      const [a, b, c, d] = orient;
+      const [ow, oh] = this.orientedSize();
+      this.container.style.transform =
+        `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom}) ` +
+        `translate(${ow / 2}px, ${oh / 2}px) matrix(${a}, ${b}, ${c}, ${d}, 0, 0) ` +
+        `translate(${-this.contentW / 2}px, ${-this.contentH / 2}px)`;
+    }
+
+    // The diagram point (natural coordinates, relative to its centre) at the middle of the pane
+    centrePoint() {
+      const r = this.area.getBoundingClientRect();
+      const [ow, oh] = this.orientedSize();
+      const fx = (r.width / 2 - this.panX) / this.zoom - ow / 2;
+      const fy = (r.height / 2 - this.panY) / this.zoom - oh / 2;
+      const [a, b, c, d] = orient;  // M^-1 = M^T for rotations/flips
+      return { x: a * fx + b * fy, y: c * fx + d * fy };
+    }
+
+    // Pan so that point p (from centrePoint) is at the middle of the pane, at the same zoom
+    centreOn(p) {
+      const r = this.area.getBoundingClientRect();
+      const [a, b, c, d] = orient;
+      const [ow, oh] = this.orientedSize();
+      this.panX = r.width / 2 - this.zoom * (a * p.x + c * p.y + ow / 2);
+      this.panY = r.height / 2 - this.zoom * (b * p.x + d * p.y + oh / 2);
+      this.applyTransform();
+    }
+
+    // -- pan / zoom --
+    bindPanZoom() {
+      const area = this.area;
+      area.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.node')) return;  // don't start a pan on a node
+        drag = {
+          pane: this, startX: e.clientX, startY: e.clientY,
+          startPanX: this.panX, startPanY: this.panY,
+        };
+        panMoved = false;
+        area.classList.add('panning');
+        e.preventDefault();
+      });
+
+      area.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = area.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const factor = Math.pow(1.1, -e.deltaY / 50);
+        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * factor));
+        // Zoom toward the mouse position
+        this.panX = mouseX - (mouseX - this.panX) * (newZoom / this.zoom);
+        this.panY = mouseY - (mouseY - this.panY) * (newZoom / this.zoom);
+        this.zoom = newZoom;
+        this.applyTransform();
+      }, { passive: false });
+
+      // Touch: pinch zoom + pan
+      let lastTouchCenter = null;
+      let lastTouchDistance = null;
+      area.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          lastTouchCenter = getTouchCenter(e.touches);
+          lastTouchDistance = getTouchDistance(e.touches);
+        }
+      }, { passive: false });
+      area.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 2 || !lastTouchDistance) return;
+        e.preventDefault();
+        const center = getTouchCenter(e.touches);
+        const distance = getTouchDistance(e.touches);
+        const rect = area.getBoundingClientRect();
+        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * distance / lastTouchDistance));
+        const anchorX = center.x - rect.left;
+        const anchorY = center.y - rect.top;
+        this.panX = anchorX - (anchorX - this.panX) * (newZoom / this.zoom);
+        this.panY = anchorY - (anchorY - this.panY) * (newZoom / this.zoom);
+        this.zoom = newZoom;
+        if (lastTouchCenter) {
+          this.panX += center.x - lastTouchCenter.x;
+          this.panY += center.y - lastTouchCenter.y;
+        }
+        lastTouchCenter = center;
+        lastTouchDistance = distance;
+        this.applyTransform();
+      }, { passive: false });
+      area.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+          lastTouchCenter = null;
+          lastTouchDistance = null;
         }
       });
-    });
+    }
 
-    // Process edge labels
-    const edgeLabelEls = svgEl.querySelectorAll('.edgeLabel');
-    edgeLabelEls.forEach(labelEl => {
-      labelEl.addEventListener('mouseenter', (e) => showEdgeTooltip(e, labelEl));
-      labelEl.addEventListener('mousemove', (e) => positionTooltip(e));
-      labelEl.addEventListener('mouseleave', () => hideTooltip());
-      labelEl.addEventListener('click', (e) => {
-        if (panMoved) return;
-        const edgeMeta = findEdgeByLabel(labelEl);
-        if (edgeMeta) {
+    // -- interactions: hover + click --
+    attachInteractions() {
+      const svgEl = this.container.querySelector('svg');
+      if (!svgEl) return;
+      const nav = DATA.navigation[this.currentDiagram] || {};
+
+      svgEl.querySelectorAll('.node').forEach(nodeEl => {
+        const mermaidId = extractNodeId(nodeEl);
+        if (!mermaidId) return;
+        const originalId = DATA.id_map[mermaidId];
+        const meta = originalId ? DATA.nodes[originalId] : null;
+
+        nodeEl.addEventListener('mouseenter', (e) => showNodeTooltip(e, meta, mermaidId));
+        nodeEl.addEventListener('mousemove', (e) => positionTooltip(e));
+        nodeEl.addEventListener('mouseleave', () => hideTooltip());
+
+        // Click: nodes with a sub-diagram open it (here, or in a new pane depending
+        // on the split mode / Ctrl+click); Shift+click and other nodes show their code
+        nodeEl.classList.add('clickable');
+        nodeEl.addEventListener('click', (e) => {
           e.stopPropagation();
           hideTooltip();
-          showEdgeCode(edgeMeta);
-        }
+          if (nav[mermaidId] && !e.shiftKey) {
+            const target = nav[mermaidId];
+            const title = meta ? meta.name : target;
+            const mode = (e.ctrlKey || e.metaKey) && splitMode === 'same' ? 'right' : splitMode;
+            if (mode === 'same' || panes.length >= MAX_PANES) {
+              this.navigateTo(target, title);
+            } else {
+              openInNewPane(this, mermaidId, target, title, mode);
+            }
+          } else if (originalId) {
+            showNodeCode(originalId);
+          }
+        });
       });
+
+      svgEl.querySelectorAll('.edgeLabel').forEach(labelEl => {
+        labelEl.addEventListener('mouseenter', (e) => showEdgeTooltip(e, labelEl, this));
+        labelEl.addEventListener('mousemove', (e) => positionTooltip(e));
+        labelEl.addEventListener('mouseleave', () => hideTooltip());
+        labelEl.addEventListener('click', (e) => {
+          if (panMoved) return;
+          const edgeMeta = findEdgeByLabel(labelEl, this);
+          if (edgeMeta) {
+            e.stopPropagation();
+            hideTooltip();
+            showEdgeCode(edgeMeta);
+          }
+        });
+      });
+    }
+
+    // Glow the [+] nodes whose sub-diagrams are open in other panes, in that pane's colour
+    applyLinks() {
+      const svgEl = this.container.querySelector('svg');
+      if (!svgEl) return;
+      svgEl.querySelectorAll('.node').forEach(nodeEl => {
+        const link = this.links.find(l => l.mermaidId === extractNodeId(nodeEl));
+        nodeEl.style.filter = link
+          ? `drop-shadow(0 0 3px ${link.color}) drop-shadow(0 0 6px ${link.color})`
+          : '';
+      });
+    }
+  }
+
+  // ---- Pane management ----
+  function createPane() {
+    const pane = new Pane();
+    panes.push(pane);
+    return pane;
+  }
+
+  function setActivePane(pane) {
+    if (activePane === pane) return;
+    if (activePane) activePane.el.classList.remove('active');
+    activePane = pane;
+    if (pane) pane.el.classList.add('active');
+    updateBreadcrumb();
+  }
+
+  function openInNewPane(source, mermaidId, target, title, mode) {
+    const child = createPane();
+    child.color = LINK_COLORS[nextColor++ % LINK_COLORS.length];
+    child.origin = { pane: source, mermaidId };
+    child.header.style.borderLeftColor = child.color;
+    child.navStack = source.navStack.slice();  // keep the path from the root for its breadcrumb
+    source.links.push({ mermaidId, color: child.color, child });
+    source.applyLinks();
+
+    if (mode === 'grid') {
+      addLeafAfter(source, child, 'row');
+      layout = gridLayout(leavesInOrder());
+    } else {
+      addLeafAfter(source, child, mode === 'down' ? 'col' : 'row');
+    }
+    relayout();
+    setActivePane(child);
+    child.navigateTo(target, title);
+  }
+
+  function closePane(pane) {
+    if (panes.length <= 1) return;
+    // Forget the link in the pane it came from, and orphan the panes opened from it
+    if (pane.origin && panes.includes(pane.origin.pane)) {
+      const parent = pane.origin.pane;
+      parent.links = parent.links.filter(l => l.child !== pane);
+      parent.applyLinks();
+    }
+    pane.links.forEach(l => { l.child.origin = null; });
+    panes = panes.filter(p => p !== pane);
+    removeLeaf(pane);
+    relayout();
+    if (activePane === pane) {
+      activePane = null;
+      setActivePane(pane.origin && panes.includes(pane.origin.pane) ? pane.origin.pane : panes[0]);
+    }
+  }
+
+  // ---- Layout tree ----
+  function findLeaf(node, pane, parent = null) {
+    if (node.kind === 'pane') return node.pane === pane ? { node, parent } : null;
+    for (const child of node.children) {
+      const hit = findLeaf(child, pane, node);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // Put newPane next to source: in source's split if it runs the same way,
+  // otherwise by splitting source's cell in two
+  function addLeafAfter(source, newPane, dir) {
+    const leaf = { kind: 'pane', pane: newPane };
+    const hit = findLeaf(layout, source);
+    if (!hit) {
+      layout = { kind: 'split', dir, children: [layout, leaf], sizes: [0.5, 0.5] };
+      return;
+    }
+    const { node, parent } = hit;
+    if (parent && parent.dir === dir) {
+      const i = parent.children.indexOf(node);
+      const half = parent.sizes[i] / 2;
+      parent.children.splice(i + 1, 0, leaf);
+      parent.sizes.splice(i, 1, half, half);
+    } else {
+      const split = { kind: 'split', dir, children: [{ kind: 'pane', pane: source }, leaf], sizes: [0.5, 0.5] };
+      replaceNode(node, parent, split);
+    }
+  }
+
+  function replaceNode(node, parent, replacement) {
+    if (!parent) {
+      layout = replacement;
+    } else {
+      parent.children[parent.children.indexOf(node)] = replacement;
+    }
+  }
+
+  function removeLeaf(pane) {
+    const hit = findLeaf(layout, pane);
+    if (!hit || !hit.parent) return;
+    const { node, parent } = hit;
+    const i = parent.children.indexOf(node);
+    const freed = parent.sizes[i];
+    parent.children.splice(i, 1);
+    parent.sizes.splice(i, 1);
+    // Give the freed space to the neighbour
+    parent.sizes[Math.max(0, i - 1)] += freed;
+    if (parent.children.length === 1) {
+      // Collapse a split with a single child into that child
+      const grand = findParent(layout, parent);
+      replaceNode(parent, grand, parent.children[0]);
+    }
+  }
+
+  function findParent(node, target, parent = null) {
+    if (node === target) return parent;
+    if (node.kind !== 'split') return undefined;
+    for (const child of node.children) {
+      const found = findParent(child, target, node);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+
+  function leavesInOrder(node = layout, out = []) {
+    if (node.kind === 'pane') out.push(node.pane);
+    else node.children.forEach(c => leavesInOrder(c, out));
+    return out;
+  }
+
+  // Rows x columns, as close to square as possible
+  function gridLayout(list) {
+    if (list.length === 1) return { kind: 'pane', pane: list[0] };
+    const cols = Math.ceil(Math.sqrt(list.length));
+    const rows = [];
+    for (let i = 0; i < list.length; i += cols) {
+      const row = list.slice(i, i + cols).map(p => ({ kind: 'pane', pane: p }));
+      rows.push(row.length === 1 ? row[0] : { kind: 'split', dir: 'row', children: row, sizes: row.map(() => 1 / row.length) });
+    }
+    return rows.length === 1 ? rows[0] : { kind: 'split', dir: 'col', children: rows, sizes: rows.map(() => 1 / rows.length) };
+  }
+
+  // Rebuild the DOM from the layout tree, keeping each pane's view centred
+  function relayout() {
+    const centres = new Map(panes.filter(p => p.contentW).map(p => [p, p.centrePoint()]));
+    panesRoot.innerHTML = '';
+    panesRoot.appendChild(buildNode(layout));
+    const multi = panes.length > 1;
+    // The legend would cover the top-right pane: fold it away when splitting starts
+    if (multi && !diagramArea.classList.contains('multi')) legend.classList.add('collapsed');
+    panesRoot.classList.toggle('multi', multi);
+    diagramArea.classList.toggle('multi', multi);
+    centres.forEach((c, p) => p.centreOn(c));
+  }
+
+  function buildNode(node) {
+    if (node.kind === 'pane') return node.pane.el;
+    const el = document.createElement('div');
+    el.className = 'split ' + node.dir;
+    node.children.forEach((child, i) => {
+      if (i > 0) el.appendChild(makeDivider(node, i - 1, el));
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.style.flex = `${node.sizes[i]} 1 0`;
+      cell.appendChild(buildNode(child));
+      el.appendChild(cell);
     });
+    return el;
+  }
+
+  // Dragging a divider moves space between the two cells either side of it
+  function makeDivider(split, i, splitEl) {
+    const div = document.createElement('div');
+    div.className = 'divider';
+    div.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = splitEl.getBoundingClientRect();
+      const total = split.dir === 'row' ? rect.width : rect.height;
+      divDrag = {
+        split, i, splitEl, div, total,
+        start: split.dir === 'row' ? e.clientX : e.clientY,
+        a: split.sizes[i], b: split.sizes[i + 1],
+        centres: new Map(panes.map(p => [p, p.centrePoint()])),
+      };
+      div.classList.add('dragging');
+    });
+    return div;
+  }
+
+  // ---- Split mode ----
+  const SPLIT_KEY = 'noodles-split-mode';
+  let splitMode = 'same';
+  try {
+    const saved = localStorage.getItem(SPLIT_KEY);
+    if (['same', 'right', 'down', 'grid'].includes(saved)) splitMode = saved;
+  } catch (e) {}
+
+  function setSplitMode(mode) {
+    splitMode = mode;
+    try { localStorage.setItem(SPLIT_KEY, mode); } catch (e) {}
+    document.querySelectorAll('.split-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    // Switching to grid tidies the panes that are already open
+    if (mode === 'grid' && panes.length > 1) {
+      layout = gridLayout(leavesInOrder());
+      relayout();
+    }
+  }
+  document.querySelectorAll('.split-mode-btn').forEach(b => b.addEventListener('click', () => setSplitMode(b.dataset.mode)));
+  setSplitMode(splitMode);
+
+  // ---- Init ----
+  initMermaid();
+
+  fetch('/api/data')
+    .then(r => r.json())
+    .then(data => {
+      DATA = data;
+      loading.style.display = 'none';
+      navigateTo('main', 'Main');
+    })
+    .catch(err => {
+      loading.textContent = 'Failed to load data: ' + err.message;
+    });
+
+  // Navigate the active pane (creating the first pane on first use)
+  function navigateTo(name, title) {
+    if (!activePane) {
+      const pane = createPane();
+      layout = { kind: 'pane', pane };
+      relayout();
+      setActivePane(pane);
+    }
+    activePane.navigateTo(name, title);
   }
 
   // ---- Code panel ----
@@ -807,7 +1229,7 @@
     return seg.offset + seg.code.split('\n').length;  // exclusive, relative
   }
 
-  function noCodeNote(meta) {
+  function noCodeNote() {
     return '<div class="note">No code stored for this map. Re-run the analysis to include code excerpts.</div>';
   }
 
@@ -817,7 +1239,7 @@
     const loc = fileOf(nodeId) + (meta.line ? ':' + meta.line : '');
     const title = meta.name || nodeId.split('::').pop();
     if (!snip) {
-      openCode(title, loc, noCodeNote(meta));
+      openCode(title, loc, noCodeNote());
       return;
     }
     // Highlight the definition line and every call site to another mapped function
@@ -850,7 +1272,7 @@
     const title = (caller.name || edge.from.split('::').pop()) + ' → ' + (callee.name || edge.to.split('::').pop());
     const loc = fileOf(edge.from) + (edge.line ? ':' + edge.line : '');
     if (!snip || !edge.line) {
-      openCode(title, loc, noCodeNote(caller));
+      openCode(title, loc, noCodeNote());
       return;
     }
     // The call line in the middle, with CONTEXT_LINES before and after
@@ -865,11 +1287,11 @@
     openCode(title, loc, renderSegment(snip, seg, rel - CONTEXT_LINES, rel + CONTEXT_LINES + 1, marks, {}));
   }
 
-  // Edge labels carry no ids, so match by label text, preferring edges in the current diagram
-  function findEdgeByLabel(labelEl) {
+  // Edge labels carry no ids, so match by label text, preferring edges in the pane's diagram
+  function findEdgeByLabel(labelEl, pane) {
     const labelText = (labelEl.textContent || '').trim().replace(/^"|"$/g, '');
     if (!labelText) return null;
-    const source = DATA.diagrams[currentDiagram] || '';
+    const source = DATA.diagrams[pane.currentDiagram] || '';
     let fallback = null;
     for (const [key, meta] of Object.entries(DATA.edges)) {
       if (meta.label !== labelText) continue;
@@ -912,9 +1334,9 @@
     positionTooltip(e);
   }
 
-  function showEdgeTooltip(e, labelEl) {
+  function showEdgeTooltip(e, labelEl, pane) {
     const labelText = (labelEl.textContent || '').trim().replace(/^"|"$/g, '');
-    const edgeMeta = findEdgeByLabel(labelEl);
+    const edgeMeta = findEdgeByLabel(labelEl, pane);
 
     if (edgeMeta) {
       let html = `<div class="tt-edge-label">${escapeHtml(edgeMeta.label)}</div>`;
@@ -950,137 +1372,61 @@
     tooltip.style.display = 'none';
   }
 
-  // ---- Navigation ----
-  function navigateTo(diagramName, title) {
-    navStack.push({ name: diagramName, title: title || diagramName });
-    renderDiagram(diagramName);
-    updateBreadcrumb();
-  }
-
-  function navigateBack() {
-    if (navStack.length <= 1) return;
-    navStack.pop();
-    const current = navStack[navStack.length - 1];
-    renderDiagram(current.name);
-    updateBreadcrumb();
-  }
-
-  function navigateToIndex(index) {
-    if (index >= navStack.length - 1) return; // Already here
-    navStack = navStack.slice(0, index + 1);
-    const current = navStack[navStack.length - 1];
-    renderDiagram(current.name);
-    updateBreadcrumb();
-  }
-
+  // ---- Breadcrumb (follows the active pane) ----
   function updateBreadcrumb() {
-    backBtn.disabled = navStack.length <= 1;
+    const stack = activePane ? activePane.navStack : [];
+    backBtn.disabled = stack.length <= 1;
 
     let html = '';
-    navStack.forEach((item, i) => {
+    stack.forEach((item, i) => {
       if (i > 0) html += '<span class="crumb-sep">›</span>';
-      const isCurrent = i === navStack.length - 1;
+      const isCurrent = i === stack.length - 1;
       html += `<span class="crumb ${isCurrent ? 'current' : ''}" data-index="${i}">${escapeHtml(item.title)}</span>`;
     });
     breadcrumb.innerHTML = html;
 
-    // Attach click handlers
     breadcrumb.querySelectorAll('.crumb:not(.current)').forEach(el => {
       el.addEventListener('click', () => {
-        navigateToIndex(parseInt(el.dataset.index));
+        if (activePane) activePane.navigateToIndex(parseInt(el.dataset.index));
       });
     });
   }
 
-  backBtn.addEventListener('click', navigateBack);
+  backBtn.addEventListener('click', () => { if (activePane) activePane.navigateBack(); });
 
-  // ---- Pan ----
-  area.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    // Don't start pan if clicking a node
-    if (e.target.closest('.node')) return;
-    isPanning = true;
-    panMoved = false;
-    area.classList.add('panning');
-    panStartX = e.clientX;
-    panStartY = e.clientY;
-    panStartPanX = panX;
-    panStartPanY = panY;
-    e.preventDefault();
-  });
+  // ---- Dragging: panning a pane, or moving a divider ----
+  let drag = null;      // pane pan in progress
+  let divDrag = null;   // divider drag in progress
+  let panMoved = false; // true once a drag moves, so the click that ends it is ignored
 
   window.addEventListener('mousemove', (e) => {
-    if (!isPanning) return;
-    if (Math.abs(e.clientX - panStartX) + Math.abs(e.clientY - panStartY) > 4) panMoved = true;
-    panX = panStartPanX + (e.clientX - panStartX);
-    panY = panStartPanY + (e.clientY - panStartY);
-    applyTransform();
+    if (drag) {
+      if (Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) > 4) panMoved = true;
+      drag.pane.panX = drag.startPanX + (e.clientX - drag.startX);
+      drag.pane.panY = drag.startPanY + (e.clientY - drag.startY);
+      drag.pane.applyTransform();
+    } else if (divDrag) {
+      const d = divDrag;
+      const pos = d.split.dir === 'row' ? e.clientX : e.clientY;
+      const pair = d.a + d.b;
+      const min = Math.min(0.1, pair / 3);
+      let a = d.a + ((pos - d.start) / d.total);
+      a = Math.max(min, Math.min(pair - min, a));
+      d.split.sizes[d.i] = a;
+      d.split.sizes[d.i + 1] = pair - a;
+      // Cells and dividers alternate inside the split element
+      const cells = Array.from(d.splitEl.children).filter(c => c.classList.contains('cell'));
+      cells[d.i].style.flex = `${a} 1 0`;
+      cells[d.i + 1].style.flex = `${pair - a} 1 0`;
+      d.centres.forEach((c, p) => p.centreOn(c));
+    }
   });
 
   window.addEventListener('mouseup', () => {
-    isPanning = false;
-    area.classList.remove('panning');
-  });
-
-  // ---- Zoom (wheel) ----
-  area.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const rect = area.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const factor = Math.pow(1.1, -e.deltaY / 50);
-    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
-
-    // Zoom toward mouse position
-    panX = mouseX - (mouseX - panX) * (newZoom / zoom);
-    panY = mouseY - (mouseY - panY) * (newZoom / zoom);
-    zoom = newZoom;
-
-    applyTransform();
-  }, { passive: false });
-
-  // ---- Touch: pinch zoom + pan ----
-  area.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      lastTouchCenter = getTouchCenter(e.touches);
-      lastTouchDistance = getTouchDistance(e.touches);
-    }
-  }, { passive: false });
-
-  area.addEventListener('touchmove', (e) => {
-    if (e.touches.length !== 2 || !lastTouchDistance) return;
-    e.preventDefault();
-
-    const center = getTouchCenter(e.touches);
-    const distance = getTouchDistance(e.touches);
-    const rect = area.getBoundingClientRect();
-
-    // Pinch zoom
-    const factor = distance / lastTouchDistance;
-    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
-    const anchorX = center.x - rect.left;
-    const anchorY = center.y - rect.top;
-    panX = anchorX - (anchorX - panX) * (newZoom / zoom);
-    panY = anchorY - (anchorY - panY) * (newZoom / zoom);
-    zoom = newZoom;
-
-    // Pan
-    if (lastTouchCenter) {
-      panX += center.x - lastTouchCenter.x;
-      panY += center.y - lastTouchCenter.y;
-    }
-
-    lastTouchCenter = center;
-    lastTouchDistance = distance;
-    applyTransform();
-  }, { passive: false });
-
-  area.addEventListener('touchend', (e) => {
-    if (e.touches.length < 2) {
-      lastTouchCenter = null;
-      lastTouchDistance = null;
-    }
+    if (drag) drag.pane.area.classList.remove('panning');
+    if (divDrag) divDrag.div.classList.remove('dragging');
+    drag = null;
+    divDrag = null;
   });
 
   function getTouchCenter(touches) {
@@ -1100,8 +1446,8 @@
     if (e.key === 'Escape') {
       if (codePanel.classList.contains('open')) {
         closeCode();
-      } else {
-        navigateBack();
+      } else if (activePane) {
+        activePane.navigateBack();
       }
     } else if (e.ctrlKey || e.metaKey || e.altKey) {
       return;
@@ -1118,7 +1464,9 @@
     } else if (e.key === 'o' || e.key === 'O') {
       resetOrientation();
     } else if (e.key === 'f' || e.key === 'F') {
-      resetView();
+      if (activePane) activePane.resetView();
+    } else if (e.key === 'x' || e.key === 'X') {
+      if (activePane) closePane(activePane);
     }
   });
 })();
